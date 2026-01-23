@@ -54,69 +54,7 @@ ralph-py run -p "Fix the bug" -C /path/to/project
 ralph-py stream -p "Explain this code"
 ```
 
-### As a Library
 
-```python
-import asyncio
-from ralph_py import ClaudeBackend, ClaudeExecutor, ExecutorConfig
-
-async def main():
-    # 创建后端和执行器
-    backend = ClaudeBackend.default()
-    config = ExecutorConfig(idle_timeout_secs=300)
-    executor = ClaudeExecutor(backend, config)
-    
-    # 定义回调
-    def on_text(text: str):
-        print(text, end="")
-    
-    def on_tool_call(name: str, tool_id: str, inputs: dict):
-        print(f"\n→ Tool: {name}")
-    
-    # 运行
-    result = await executor.run(
-        prompt="Create a simple Flask app",
-        on_text=on_text,
-        on_tool_call=on_tool_call,
-    )
-    
-    print(f"\nSuccess: {result.success}")
-    if result.session_result:
-        print(f"Cost: ${result.session_result.total_cost_usd:.4f}")
-
-asyncio.run(main())
-```
-
-### Orchestration Loop
-
-```python
-import asyncio
-from ralph_py import ClaudeBackend
-from ralph_py.orchestrator import Orchestrator, OrchestratorConfig
-
-async def main():
-    config = OrchestratorConfig(
-        max_iterations=5,
-        completion_marker="LOOP_COMPLETE",
-    )
-    
-    orchestrator = Orchestrator(
-        ClaudeBackend.default(),
-        config,
-    )
-    
-    result = await orchestrator.run(
-        prompt="""
-        Build a CLI calculator app.
-        When done, output LOOP_COMPLETE.
-        """,
-    )
-    
-    print(f"Status: {result.status}")
-    print(f"Iterations: {result.iterations}")
-
-asyncio.run(main())
-```
 
 ## Architecture
 

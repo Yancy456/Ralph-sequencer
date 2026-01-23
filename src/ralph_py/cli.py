@@ -10,13 +10,19 @@ Usage:
 
 import argparse
 import asyncio
+import io
 import json
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 OUTPUT_DIR = Path(".ralph_debug")
+
+# Global variable to store the current run directory
+_current_run_dir: Optional[Path] = None
 
 
 def format_ndjson(raw_output: str) -> str:
@@ -38,12 +44,53 @@ from rich.logging import RichHandler
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.text import Text
+import re
 
 from ralph_py.claude_backend import ClaudeBackend
 from ralph_py.executor import ClaudeExecutor, ExecutorConfig, ExecutionResult
 from ralph_py.orchestrator import Orchestrator, OrchestratorConfig, LoopStatus, load_prompt
 
 console = Console()
+_logger = None  # Will be set in setup_logging
+_file_logger = None  # File-only logger for log_print
+
+
+def _strip_rich_markup(text: str) -> str:
+    """Strip Rich markup tags from text."""
+    # Remove Rich markup like [bold], [cyan], [/bold], etc.
+    return re.sub(r'\[/?[^\]]+\]', '', text)
+
+
+def log_print(*args, **kwargs) -> None:
+    """Print to console and also log to file."""
+    # Print to console first
+    console.print(*args, **kwargs)
+    
+    # Also log to file (strip Rich markup for plain text logging)
+    # Use file_logger to avoid duplicate console output from RichHandler
+    if _file_logger:
+        # Use a StringIO buffer to capture plain text output
+        buffer = io.StringIO()
+        temp_console = Console(file=buffer, force_terminal=False, legacy_windows=False)
+        temp_console.print(*args, **kwargs)
+        plain_text = buffer.getvalue()
+        buffer.close()
+        
+        # Strip ANSI codes and clean up
+        plain_text = _strip_rich_markup(plain_text)
+        # Remove extra whitespace but preserve line breaks
+        lines = [line.strip() for line in plain_text.split('\n') if line.strip()]
+        for line in lines:
+            if line:
+                _file_logger.info(line)
+
+
+def log_print_exception() -> None:
+    """Print exception to console and also log to file."""
+    console.print_exception()
+    if _logger:
+        import traceback
+        _logger.exception("Exception occurred")
 
 
 def _get_tool_detail(name: str, inputs: dict) -> str:
@@ -59,22 +106,75 @@ def _get_tool_detail(name: str, inputs: dict) -> str:
     return ""
 
 
+def get_run_dir() -> Path:
+    """Get or create the current run directory."""
+    global _current_run_dir
+    if _current_run_dir is None:
+        OUTPUT_DIR.mkdir(exist_ok=True)
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        _current_run_dir = OUTPUT_DIR / timestamp
+        _current_run_dir.mkdir(exist_ok=True)
+    return _current_run_dir
+
+
 def get_output_path() -> Path:
-    """Generate a unique output file path with timestamp."""
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    return OUTPUT_DIR / f"{timestamp}.ndjson"
+    """Generate output file path in the current run directory."""
+    run_dir = get_run_dir()
+    return run_dir / "output.ndjson"
 
 
-def setup_logging(verbose: bool = False) -> None:
-    """Set up logging with rich handler."""
-    level = logging.DEBUG if verbose else logging.WARNING
+def get_log_path() -> Path:
+    """Generate log file path in the current run directory."""
+    run_dir = get_run_dir()
+    return run_dir / "run.log"
+
+
+def setup_logging() -> None:
+    """Set up logging with rich handler and file handler."""
+    level = logging.INFO
+    log_path = get_log_path()
+    
+    # Create handlers
+    handlers = [
+        RichHandler(
+            console=console, 
+            rich_tracebacks=False, 
+            show_time=False, 
+            show_level=False,
+        ),
+        logging.FileHandler(log_path, encoding='utf-8'),
+    ]
+    
+    # File handler format with timestamp
+    file_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handlers[1].setFormatter(file_formatter)
+    
     logging.basicConfig(
         level=level,
         format="%(message)s",
         datefmt="[%X]",
-        handlers=[RichHandler(console=console, rich_tracebacks=True)],
+        handlers=handlers,
     )
+    
+    global _logger, _file_logger
+    _logger = logging.getLogger(__name__)
+    
+    # Create a file-only logger for log_print to avoid duplicate console output
+    _file_logger = logging.getLogger(f"{__name__}.file_only")
+    _file_logger.setLevel(level)
+    # Remove all handlers to avoid console output
+    _file_logger.handlers = []
+    # Add only file handler
+    file_handler = logging.FileHandler(log_path, encoding='utf-8')
+    file_handler.setFormatter(file_formatter)
+    _file_logger.addHandler(file_handler)
+    _file_logger.propagate = False  # Don't propagate to root logger
+    
+    # Log file path only to file, not to console to avoid showing file paths
+    _file_logger.info(f"Log file: {log_path}")
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -82,12 +182,6 @@ def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ralph-py",
         description="Python orchestrator for Claude Code CLI",
-    )
-    
-    parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Enable verbose logging",
     )
     
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -163,7 +257,7 @@ async def run_single(
     config: ExecutorConfig,
 ) -> int:
     """Run a single execution."""
-    console.print(Panel(
+    log_print(Panel(
         Text(prompt[:500] + "..." if len(prompt) > 500 else prompt),
         title="[bold blue]Prompt[/bold blue]",
         border_style="blue",
@@ -175,17 +269,17 @@ async def run_single(
     def on_text(text: str) -> None:
         nonlocal cli_started
         if not cli_started:
-            console.print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
+            log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
             cli_started = True
-        console.print(f"[cyan]\\[msg][/cyan] {text}")
+        log_print(f"[cyan]\\[msg][/cyan] {text}")
     
     def on_tool_call(name: str, tool_id: str, inputs: dict) -> None:
         nonlocal cli_started
         if not cli_started:
-            console.print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
+            log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
             cli_started = True
         detail = _get_tool_detail(name, inputs)
-        console.print(f"[yellow]\\[{name}][/yellow]{detail}")
+        log_print(f"[yellow]\\[{name}][/yellow]{detail}")
     
     result = await executor.run(
         prompt,
@@ -193,17 +287,17 @@ async def run_single(
         on_tool_call=on_tool_call,
     )
     if cli_started:
-        console.print("[bold magenta]<<< claude CLI end <<<[/bold magenta]\n")
+        log_print("[bold magenta]<<< claude CLI end <<<[/bold magenta]\n")
     
     # Save NDJSON output to file
     if result.output:
         output_path = get_output_path()
-        output_path.write_text(format_ndjson(result.output))
-        console.print(f"[dim]NDJSON saved to: {output_path}[/dim]")
+        output_path.write_text(format_ndjson(result.output), encoding='utf-8')
+        log_print(f"[dim]NDJSON saved to: {output_path}[/dim]")
     
     # Print result summary
     if result.session_result:
-        console.print(Panel(
+        log_print(Panel(
             f"Duration: {result.session_result.duration_ms}ms\n"
             f"Cost: ${result.session_result.total_cost_usd:.4f}\n"
             f"Turns: {result.session_result.num_turns}",
@@ -220,47 +314,46 @@ async def run_loop(
     config: OrchestratorConfig,
 ) -> int:
     """Run the orchestration loop."""
-    console.print(Panel(
+    log_print(Panel(
         Text(prompt[:500] + "..." if len(prompt) > 500 else prompt),
         title="[bold blue]Initial Prompt[/bold blue]",
         border_style="blue",
     ))
     
-    console.print(f"\n[dim]Max iterations: {config.max_iterations}[/dim]")
-    console.print(f"[dim]Completion marker: {config.completion_marker}[/dim]\n")
+    logger = logging.getLogger(__name__)
+    log_print(f"[dim]Max iterations: {config.max_iterations}[/dim]")
+    log_print(f"[dim]Completion marker: {config.completion_marker}[/dim]")
     
     orchestrator = Orchestrator(backend, config)
-    all_outputs: list[str] = []
     cli_started = False
     
     def on_iteration(iteration: int, result: ExecutionResult) -> None:
         nonlocal cli_started
         # End CLI section if started
         if cli_started:
-            console.print("[bold magenta]<<< claude CLI end <<<[/bold magenta]")
+            log_print("[bold magenta]<<< claude CLI end <<<[/bold magenta]")
             cli_started = False
-        status = "[green]✓[/green]" if result.success else "[red]✗[/red]"
-        console.print(f"\n[bold]Iteration {iteration}[/bold] {status}")
+        status = "✓" if result.success else "✗"
+        log_print(f"[bold]Iteration {iteration}[/bold] {status}")
         if result.session_result:
-            console.print(f"[dim]Cost: ${result.session_result.total_cost_usd:.4f}[/dim]")
-        # Collect output for saving
-        if result.output:
-            all_outputs.append(result.output)
+            duration_sec = result.session_result.duration_ms / 1000.0
+            log_print(f"[dim]Cost: ${result.session_result.total_cost_usd:.4f}[/dim]")
+            log_print(f"[dim]Duration: {duration_sec:.2f}s ({result.session_result.duration_ms}ms)[/dim]")
     
     def on_text(text: str) -> None:
         nonlocal cli_started
         if not cli_started:
-            console.print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
+            log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
             cli_started = True
-        console.print(f"[cyan]\\[msg][/cyan] {text}")
+        log_print(f"[cyan]\\[msg][/cyan] {text}")
     
     def on_tool_call(name: str, tool_id: str, inputs: dict) -> None:
         nonlocal cli_started
         if not cli_started:
-            console.print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
+            log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
             cli_started = True
         detail = _get_tool_detail(name, inputs)
-        console.print(f"[yellow]\\[{name}][/yellow]{detail}")
+        log_print(f"[yellow]\\[{name}][/yellow]{detail}")
     
     loop_result = await orchestrator.run(
         prompt,
@@ -270,13 +363,13 @@ async def run_loop(
     )
     # End CLI section if still open
     if cli_started:
-        console.print("[bold magenta]<<< claude CLI end <<<[/bold magenta]\n")
+        log_print("[bold magenta]<<< claude CLI end <<<[/bold magenta]\n")
     
     # Save NDJSON output to file
-    if all_outputs:
+    if loop_result.outputs:
         output_path = get_output_path()
-        output_path.write_text(format_ndjson("\n".join(all_outputs)))
-        console.print(f"[dim]NDJSON saved to: {output_path}[/dim]")
+        output_path.write_text(format_ndjson("\n".join(loop_result.outputs)), encoding='utf-8')
+        log_print(f"[dim]NDJSON saved to: {output_path}[/dim]")
     
     # Print final summary
     status_emoji = {
@@ -287,7 +380,7 @@ async def run_loop(
         LoopStatus.ERROR: "[red]✗ Error[/red]",
     }.get(loop_result.status, str(loop_result.status))
     
-    console.print(Panel(
+    log_print(Panel(
         f"Status: {status_emoji}\n"
         f"Iterations: {loop_result.iterations}\n"
         f"Duration: {loop_result.total_duration_ms}ms\n"
@@ -297,7 +390,7 @@ async def run_loop(
     ))
     
     if loop_result.error:
-        console.print(f"[red]Error: {loop_result.error}[/red]")
+        log_print(f"[red]Error: {loop_result.error}[/red]")
     
     return 0
 
@@ -324,17 +417,17 @@ async def run_stream(
             nonlocal cli_started
             progress.stop()
             if not cli_started:
-                console.print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
+                log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
                 cli_started = True
-            console.print(f"[cyan]\\[msg][/cyan] {text}")
+            log_print(f"[cyan]\\[msg][/cyan] {text}")
         
         def on_tool_call(name: str, tool_id: str, inputs: dict) -> None:
             nonlocal cli_started
             if not cli_started:
-                console.print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
+                log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
                 cli_started = True
             detail = _get_tool_detail(name, inputs)
-            console.print(f"[yellow]\\[{name}][/yellow]{detail}")
+            log_print(f"[yellow]\\[{name}][/yellow]{detail}")
         
         result = await executor.run(
             prompt,
@@ -343,13 +436,13 @@ async def run_stream(
         )
     
     if cli_started:
-        console.print("[bold magenta]<<< claude CLI end <<<[/bold magenta]\n")
+        log_print("[bold magenta]<<< claude CLI end <<<[/bold magenta]\n")
     
     # Save NDJSON output to file
     if result.output:
         output_path = get_output_path()
-        output_path.write_text(format_ndjson(result.output))
-        console.print(f"[dim]NDJSON saved to: {output_path}[/dim]")
+        output_path.write_text(format_ndjson(result.output), encoding='utf-8')
+        log_print(f"[dim]NDJSON saved to: {output_path}[/dim]")
     
     return 0
 
@@ -363,7 +456,7 @@ def main() -> int:
         parser.print_help()
         return 0
     
-    setup_logging(args.verbose)
+    setup_logging()
     
     try:
         if args.command == "run":
@@ -374,7 +467,7 @@ def main() -> int:
                 try:
                     prompt = load_prompt(args.file, args.directory)
                 except FileNotFoundError as e:
-                    console.print(f"[red]Error: {e}[/red]")
+                    log_print(f"[red]Error: {e}[/red]")
                     return 0
             
             # Create backend
@@ -410,12 +503,11 @@ def main() -> int:
             return 0
             
     except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted[/yellow]")
+        log_print("\n[yellow]Interrupted[/yellow]")
         return 0
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        if args.verbose:
-            console.print_exception()
+        log_print(f"[red]Error: {e}[/red]")
+        log_print_exception()
         return 0
 
 
