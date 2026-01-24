@@ -101,7 +101,7 @@ claude --dangerously-skip-permissions --verbose --output-format stream-json -p "
 | `max_iterations` | 10 | 最大循环次数 |
 | `loop_timeout_secs` | 3600 | 总超时时间（秒） |
 | `iteration_timeout_secs` | 300 | 单次迭代超时（秒） |
-| `completion_marker` | "LOOP_COMPLETE" | 完成标记 |
+| `break_marker` | "LOOP_BREAK" | 中断标记 |
 
 ## License
 

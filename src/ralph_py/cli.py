@@ -39,6 +39,15 @@ def format_ndjson(raw_output: str) -> str:
             formatted_lines.append(line)
     return "\n\n".join(formatted_lines)
 
+
+def format_duration(ms: int) -> str:
+    """Format duration in milliseconds to HH:MM:SS format."""
+    total_seconds = ms // 1000
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
@@ -117,9 +126,11 @@ def get_run_dir() -> Path:
     return _current_run_dir
 
 
-def get_output_path() -> Path:
+def get_output_path(iteration: Optional[int] = None) -> Path:
     """Generate output file path in the current run directory."""
     run_dir = get_run_dir()
+    if iteration is not None:
+        return run_dir / f"iteration_{iteration}.ndjson"
     return run_dir / "output.ndjson"
 
 
@@ -203,7 +214,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--max-iterations",
         type=int,
         default=1,
-        help="Maximum loop iterations (default: 10)",
+        help="Maximum loop iterations (default: 1)",
     )
     run_parser.add_argument(
         "--timeout",
@@ -212,15 +223,16 @@ def create_parser() -> argparse.ArgumentParser:
         help="Per-iteration timeout in seconds (default: 300)",
     )
     run_parser.add_argument(
-        "--completion-marker",
+        "--break-marker",
         type=str,
-        default="LOOP_COMPLETE",
-        help="Marker to signal loop completion (default: LOOP_COMPLETE)",
+        default="LOOP_BREAK",
+        help="Marker to signal loop break (default: LOOP_BREAK)",
     )
     run_parser.add_argument(
-        "--single",
-        action="store_true",
-        help="Run single iteration (no loop)",
+        "--continue-marker",
+        type=str,
+        default="LOOP_CONTINUE",
+        help="Marker to signal continue to next iteration (default: LOOP_CONTINUE)",
     )
     run_parser.add_argument(
         "-C", "--directory",
@@ -297,8 +309,9 @@ async def run_single(
     
     # Print result summary
     if result.session_result:
+        duration_str = format_duration(result.session_result.duration_ms)
         log_print(Panel(
-            f"Duration: {result.session_result.duration_ms}ms\n"
+            f"Duration: {duration_str}\n"
             f"Cost: ${result.session_result.total_cost_usd:.4f}\n"
             f"Turns: {result.session_result.num_turns}",
             title="[bold green]Session Complete[/bold green]",
@@ -322,7 +335,8 @@ async def run_loop(
     
     logger = logging.getLogger(__name__)
     log_print(f"[dim]Max iterations: {config.max_iterations}[/dim]")
-    log_print(f"[dim]Completion marker: {config.completion_marker}[/dim]")
+    log_print(f"[dim]Break marker: {config.break_marker}[/dim]")
+    log_print(f"[dim]Continue marker: {config.continue_marker}[/dim]")
     
     orchestrator = Orchestrator(backend, config)
     cli_started = False
@@ -336,9 +350,9 @@ async def run_loop(
         status = "✓" if result.success else "✗"
         log_print(f"[bold]Iteration {iteration}[/bold] {status}")
         if result.session_result:
-            duration_sec = result.session_result.duration_ms / 1000.0
+            duration_str = format_duration(result.session_result.duration_ms)
             log_print(f"[dim]Cost: ${result.session_result.total_cost_usd:.4f}[/dim]")
-            log_print(f"[dim]Duration: {duration_sec:.2f}s ({result.session_result.duration_ms}ms)[/dim]")
+            log_print(f"[dim]Duration: {duration_str}[/dim]")
     
     def on_text(text: str) -> None:
         nonlocal cli_started
@@ -355,11 +369,18 @@ async def run_loop(
         detail = _get_tool_detail(name, inputs)
         log_print(f"[yellow]\\[{name}][/yellow]{detail}")
     
+    def on_save_output(iteration: int, output: str) -> None:
+        """Save output when LOOP_CONTINUE is detected."""
+        output_path = get_output_path(iteration)
+        output_path.write_text(format_ndjson(output), encoding='utf-8')
+        log_print(f"[dim]NDJSON saved to: {output_path}[/dim]")
+    
     loop_result = await orchestrator.run(
         prompt,
         on_iteration=on_iteration,
         on_text=on_text,
         on_tool_call=on_tool_call,
+        on_save_output=on_save_output,
     )
     # End CLI section if still open
     if cli_started:
@@ -380,10 +401,11 @@ async def run_loop(
         LoopStatus.ERROR: "[red]✗ Error[/red]",
     }.get(loop_result.status, str(loop_result.status))
     
+    duration_str = format_duration(loop_result.total_duration_ms)
     log_print(Panel(
         f"Status: {status_emoji}\n"
         f"Iterations: {loop_result.iterations}\n"
-        f"Duration: {loop_result.total_duration_ms}ms\n"
+        f"Duration: {duration_str}\n"
         f"Total Cost: ${loop_result.total_cost_usd:.4f}",
         title="[bold]Loop Result[/bold]",
         border_style="blue" if loop_result.status == LoopStatus.COMPLETED else "yellow",
@@ -473,22 +495,15 @@ def main() -> int:
             # Create backend
             backend = ClaudeBackend.default()
             
-            if args.single:
-                # Single execution
-                config = ExecutorConfig(
-                    idle_timeout_secs=args.timeout,
-                    working_directory=args.directory,
-                )
-                return asyncio.run(run_single(prompt, backend, config))
-            else:
-                # Loop execution
-                config = OrchestratorConfig(
-                    max_iterations=args.max_iterations,
-                    iteration_timeout_secs=args.timeout,
-                    completion_marker=args.completion_marker,
-                    working_directory=args.directory,
-                )
-                return asyncio.run(run_loop(prompt, backend, config))
+            # Loop execution
+            config = OrchestratorConfig(
+                max_iterations=args.max_iterations,
+                iteration_timeout_secs=args.timeout,
+                break_marker=args.break_marker,
+                continue_marker=args.continue_marker,
+                working_directory=args.directory,
+            )
+            return asyncio.run(run_loop(prompt, backend, config))
         
         elif args.command == "stream":
             backend = ClaudeBackend.default()

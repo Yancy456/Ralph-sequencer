@@ -60,22 +60,6 @@ class ClaudeBackend:
             output_format=OutputFormat.STREAM_JSON,
         )
     
-    @classmethod
-    def interactive(cls) -> "ClaudeBackend":
-        """
-        Creates the Claude backend for interactive mode.
-        
-        Runs Claude without `-p` flag, passing prompt as a positional argument.
-        This allows for interactive TUI mode.
-        """
-        return cls(
-            command="claude",
-            args=["--dangerously-skip-permissions"],
-            prompt_mode=PromptMode.ARG,
-            prompt_flag=None,
-            output_format=OutputFormat.TEXT,
-        )
-    
     def build_command(
         self, 
         prompt: str, 
@@ -101,22 +85,6 @@ class ClaudeBackend:
         
         if self.prompt_mode == PromptMode.ARG:
             prompt_text = prompt
-            
-            # Handle large prompts (>7000 chars) by writing to temp file
-            if len(prompt) > 7000:
-                try:
-                    temp_file = tempfile.NamedTemporaryFile(
-                        mode='w', 
-                        suffix='.txt', 
-                        delete=False
-                    )
-                    temp_file.write(prompt)
-                    temp_file.flush()
-                    prompt_text = f"Please read and execute the task in {temp_file.name}"
-                except Exception:
-                    # Fall back to direct prompt if temp file fails
-                    prompt_text = prompt
-                    temp_file = None
             
             if self.prompt_flag:
                 args.append(self.prompt_flag)

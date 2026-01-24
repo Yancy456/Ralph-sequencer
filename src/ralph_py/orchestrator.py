@@ -35,7 +35,8 @@ class OrchestratorConfig:
     max_iterations: int = 10  # Maximum loop iterations
     loop_timeout_secs: int = 3600  # Total timeout (1 hour default)
     iteration_timeout_secs: int = 300  # Per-iteration timeout (5 min)
-    completion_marker: str = "LOOP_COMPLETE"  # Marker to signal completion
+    break_marker: str = "LOOP_BREAK"  # Marker to signal break
+    continue_marker: str = "LOOP_CONTINUE"  # Marker to signal continue to next iteration
     working_directory: Optional[str] = None  # Working directory
     prompt_file: str = "PROMPT.md"  # Default prompt file
 
@@ -55,6 +56,7 @@ class LoopResult:
 IterationCallback = Callable[[int, ExecutionResult], None]
 TextCallback = Callable[[str], None]
 ToolCallback = Callable[[str, str, dict], None]
+SaveOutputCallback = Callable[[int, str], None]  # Callback to save output (iteration, output)
 
 
 class Orchestrator:
@@ -62,7 +64,7 @@ class Orchestrator:
     Main orchestrator for running Claude Code in a loop.
     
     Runs Claude iteratively until:
-    - The completion marker is found in output
+    - The break marker is found in output
     - Maximum iterations reached
     - Timeout occurs
     - User interrupts
@@ -91,6 +93,7 @@ class Orchestrator:
         on_iteration: Optional[IterationCallback] = None,
         on_text: Optional[TextCallback] = None,
         on_tool_call: Optional[ToolCallback] = None,
+        on_save_output: Optional[SaveOutputCallback] = None,
     ) -> LoopResult:
         """
         Run the orchestration loop.
@@ -100,6 +103,7 @@ class Orchestrator:
             on_iteration: Callback after each iteration
             on_text: Callback for streaming text
             on_tool_call: Callback for tool invocations
+            on_save_output: Callback to save output when LOOP_CONTINUE is detected
             
         Returns:
             LoopResult with final status and statistics
@@ -190,10 +194,18 @@ class Orchestrator:
                 if on_iteration:
                     on_iteration(iterations, result)
                 
-                # Check for completion marker
+                # Check for continue marker (before break check)
                 text_to_check = result.extracted_text or result.stripped_output
-                if self._check_completion(text_to_check):
-                    logger.info(f"Completion marker found after {iterations} iterations")
+                if self._check_continue(text_to_check):
+                    logger.info(f"Continue marker found after {iterations} iterations, continuing to next iteration")
+                    # Save output before continuing
+                    if on_save_output and result.output:
+                        on_save_output(iterations, result.output)
+                    continue  # Skip to next iteration
+                
+                # Check for break marker
+                if self._check_break(text_to_check):
+                    logger.info(f"Break marker found after {iterations} iterations")
                     return LoopResult(
                         status=LoopStatus.COMPLETED,
                         iterations=iterations,
@@ -232,9 +244,13 @@ class Orchestrator:
                 pass
             self._executor = None
     
-    def _check_completion(self, output: str) -> bool:
-        """Check if the output contains the completion marker."""
-        return self.config.completion_marker in output
+    def _check_break(self, output: str) -> bool:
+        """Check if the output contains the break marker."""
+        return self.config.break_marker in output
+    
+    def _check_continue(self, output: str) -> bool:
+        """Check if the output contains the continue marker."""
+        return self.config.continue_marker in output
     
     async def interrupt(self) -> None:
         """Interrupt the current execution."""
@@ -268,4 +284,4 @@ def load_prompt(
     if not path.exists():
         raise FileNotFoundError(f"Prompt file not found: {path}")
     
-    return path.read_text()
+    return path.read_text(encoding='utf-8')
