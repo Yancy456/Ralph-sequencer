@@ -15,14 +15,16 @@ import json
 import logging
 import os
 import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 OUTPUT_DIR = Path(".ralph_debug")
 
-# Global variable to store the current run directory
+# Global variables to store the current run context
 _current_run_dir: Optional[Path] = None
+_current_run_id: Optional[str] = None
 
 
 def format_ndjson(raw_output: str) -> str:
@@ -137,7 +139,41 @@ def get_output_path(iteration: Optional[int] = None) -> Path:
 def get_log_path() -> Path:
     """Generate log file path in the current run directory."""
     run_dir = get_run_dir()
+    if _current_run_id:
+        return run_dir / f"{_current_run_id}.log"
     return run_dir / "run.log"
+
+
+def _sanitize_run_id(run_id: str) -> str:
+    """Sanitize run id for filesystem usage."""
+    safe_id = run_id.strip()
+    if os.sep:
+        safe_id = safe_id.replace(os.sep, "_")
+    if os.altsep:
+        safe_id = safe_id.replace(os.altsep, "_")
+    return safe_id
+
+
+def _find_latest_run_id() -> Optional[str]:
+    """Find the most recent run UUID based on timestamped folders."""
+    if not OUTPUT_DIR.exists():
+        return None
+    run_dirs = [path for path in OUTPUT_DIR.iterdir() if path.is_dir()]
+    if not run_dirs:
+        return None
+    latest_dir = max(run_dirs, key=lambda path: path.stat().st_mtime)
+    log_files = list(latest_dir.glob("*.log"))
+    if not log_files:
+        return None
+    latest_log = max(log_files, key=lambda path: path.stat().st_mtime)
+    return latest_log.stem
+
+
+def set_run_id(run_id: str) -> None:
+    """Initialize the run id."""
+    global _current_run_id
+    safe_id = _sanitize_run_id(run_id)
+    _current_run_id = safe_id
 
 
 def setup_logging() -> None:
@@ -239,6 +275,12 @@ def create_parser() -> argparse.ArgumentParser:
         type=str,
         help="Working directory for execution",
     )
+    run_parser.add_argument(
+        "-r", "--resume",
+        nargs="?",
+        const="latest",
+        help="Resume the most recent session or a specific session UUID",
+    )
     
     # Stream command (single execution with streaming output)
     stream_parser = subparsers.add_parser("stream", help="Run Claude with streaming output")
@@ -258,6 +300,12 @@ def create_parser() -> argparse.ArgumentParser:
         "-C", "--directory",
         type=str,
         help="Working directory for execution",
+    )
+    stream_parser.add_argument(
+        "-r", "--resume",
+        nargs="?",
+        const="latest",
+        help="Resume the most recent session or a specific session UUID",
     )
     
     return parser
@@ -478,6 +526,18 @@ def main() -> int:
         parser.print_help()
         return 0
     
+    resume_id: Optional[str] = None
+    if getattr(args, "resume", None):
+        if args.resume == "latest":
+            resume_id = _find_latest_run_id()
+            if not resume_id:
+                print("Error: no previous session found to resume.")
+                return 0
+        else:
+            resume_id = args.resume
+    run_id = resume_id or str(uuid.uuid4())
+    set_run_id(run_id)
+
     setup_logging()
     
     try:
@@ -494,6 +554,10 @@ def main() -> int:
             
             # Create backend
             backend = ClaudeBackend.default()
+            if resume_id:
+                backend.args.extend(["-r", resume_id])
+            else:
+                backend.args.extend(["--session-id", run_id])
             
             # Loop execution
             config = OrchestratorConfig(
@@ -507,6 +571,10 @@ def main() -> int:
         
         elif args.command == "stream":
             backend = ClaudeBackend.default()
+            if resume_id:
+                backend.args.extend(["-r", resume_id])
+            else:
+                backend.args.extend(["--session-id", run_id])
             config = ExecutorConfig(
                 idle_timeout_secs=args.timeout,
                 working_directory=args.directory,
