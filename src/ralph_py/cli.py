@@ -219,8 +219,8 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--timeout",
         type=int,
-        default=300,
-        help="Per-iteration timeout in seconds (default: 300)",
+        default=0,
+        help="Per-iteration timeout in seconds (default: 0, no limit)",
     )
     run_parser.add_argument(
         "--break-marker",
@@ -251,7 +251,7 @@ def create_parser() -> argparse.ArgumentParser:
     stream_parser.add_argument(
         "--timeout",
         type=int,
-        default=300,
+        default=0,
         help="Timeout in seconds (default: 300)",
     )
     stream_parser.add_argument(
