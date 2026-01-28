@@ -3,9 +3,8 @@
 CLI entry point for ralph-py.
 
 Usage:
-    ralph-py run -p "prompt"           # Run with inline prompt
-    ralph-py run                       # Run with PROMPT.md
-    ralph-py run --file prompt.txt     # Run with custom prompt file
+    ralph-py run --config              # Run with ralph.yaml
+    ralph-py run --config <path>       # Run with custom config file
 """
 
 import argparse
@@ -53,12 +52,12 @@ def format_duration(ms: int) -> str:
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
-from rich.text import Text
 import re
 
 from ralph_py.claude_backend import ClaudeBackend
 from ralph_py.executor import ExecutionResult
-from ralph_py.orchestrator import Orchestrator, OrchestratorConfig, LoopStatus, load_prompt
+from ralph_py.orchestrator import Orchestrator, OrchestratorConfig, LoopStatus
+from ralph_py.config import RalphConfig
 
 console = Console()
 _logger = None  # Will be set in setup_logging
@@ -144,21 +143,6 @@ def _sanitize_run_id(run_id: str) -> str:
     return safe_id
 
 
-def _find_latest_run_id() -> Optional[str]:
-    """Find the most recent run UUID based on timestamped folders."""
-    if not OUTPUT_DIR.exists():
-        return None
-    run_dirs = [path for path in OUTPUT_DIR.iterdir() if path.is_dir()]
-    if not run_dirs:
-        return None
-    latest_dir = max(run_dirs, key=lambda path: path.stat().st_mtime)
-    log_files = list(latest_dir.glob("*.log"))
-    if not log_files:
-        return None
-    latest_log = max(log_files, key=lambda path: path.stat().st_mtime)
-    return latest_log.stem
-
-
 def set_run_id(run_id: str) -> None:
     """Initialize the run id."""
     global _current_run_id
@@ -224,18 +208,7 @@ def create_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", help="Commands")
     
     # Run command
-    run_parser = subparsers.add_parser("run", help="Run Claude with a prompt")
-    run_parser.add_argument(
-        "-p", "--prompt",
-        type=str,
-        help="Inline prompt to execute",
-    )
-    run_parser.add_argument(
-        "-f", "--file",
-        type=str,
-        default="PROMPT.md",
-        help="Prompt file to read (default: PROMPT.md)",
-    )
+    run_parser = subparsers.add_parser("run", help="Run Claude with configuration file")
     run_parser.add_argument(
         "-m", "--max-iterations",
         type=int,
@@ -249,57 +222,69 @@ def create_parser() -> argparse.ArgumentParser:
         help="Per-iteration timeout in seconds (default: 0, no limit)",
     )
     run_parser.add_argument(
-        "--break-marker",
-        type=str,
-        default="LOOP_BREAK",
-        help="Marker to signal loop break (default: LOOP_BREAK)",
-    )
-    run_parser.add_argument(
-        "--continue-marker",
-        type=str,
-        default="LOOP_CONTINUE",
-        help="Marker to signal continue to next iteration (default: LOOP_CONTINUE)",
-    )
-    run_parser.add_argument(
         "-C", "--directory",
         type=str,
         help="Working directory for execution",
     )
     run_parser.add_argument(
-        "-r", "--resume",
+        "-c", "--config",
+        type=str,
         nargs="?",
-        const="latest",
-        help="Resume the most recent session or a specific session UUID",
-    )
-    run_parser.add_argument(
-        "--reset-session-iter",
-        type=int,
-        default=1,
-        help="Reset session every N iterations to clear history (0, never reset). Default 1, reset session every iteration.",
+        const="ralph.yaml",
+        help="Use configuration file to execute repeat sequences (default: ralph.yaml if flag provided)",
     )
     
     return parser
 
 
-async def run_loop(
-    prompt: str,
+async def run_sequences(
+    ralph_config: RalphConfig,
     backend: ClaudeBackend,
     config: OrchestratorConfig,
 ) -> int:
-    """Run the orchestration loop."""
+    """Run sequences from configuration."""
     log_print(Panel(
-        Text(prompt[:500] + "..." if len(prompt) > 500 else prompt),
-        title="[bold blue]Initial Prompt[/bold blue]",
+        f"Executing {len(ralph_config.repeat_sequences)} sequence(s) from configuration",
+        title="[bold blue]Configuration Execution[/bold blue]",
         border_style="blue",
     ))
     
     logger = logging.getLogger(__name__)
-    log_print(f"[dim]Max iterations: {config.max_iterations}[/dim]")
-    log_print(f"[dim]Break marker: {config.break_marker}[/dim]")
-    log_print(f"[dim]Continue marker: {config.continue_marker}[/dim]")
     
     orchestrator = Orchestrator(backend, config)
     cli_started = False
+    
+    def on_iteration_start(
+        iteration: int,
+        sequence_info: str,
+        step_info: str,
+        role: str,
+    ) -> None:
+        """Display iteration start information in a panel."""
+        # Pre-compute NDJSON path (same as used when streaming starts)
+        output_path = get_output_path(iteration)
+        # Highlight numeric progress parts in step_info with color and prepend label
+        highlighted_step_info = re.sub(
+            r"(\d+\/\d+|\d+)",
+            r"[bold green]\1[/bold green]",
+            step_info,
+        )
+        highlighted_step_info = f"Progress: {highlighted_step_info}"
+        lines = []
+        if sequence_info:
+            lines.append(sequence_info)
+        lines.extend([
+            highlighted_step_info,
+            f"Role: {role}",
+            f"Memory: New session created for step {iteration}",
+            f"NDJSON streaming to: {output_path}",
+        ])
+        content = "\n".join(lines)
+        log_print(Panel(
+            content,
+            title=f"[bold green]Iteration {iteration} Start[/bold green]",
+            border_style="green",
+        ))
     
     def on_iteration(iteration: int, result: ExecutionResult) -> None:
         nonlocal cli_started
@@ -308,11 +293,17 @@ async def run_loop(
             log_print("[bold magenta]<<< claude CLI end <<<[/bold magenta]")
             cli_started = False
         status = "✓" if result.success else "✗"
-        log_print(f"[bold]Iteration {iteration}[/bold] {status}")
+        lines = [f"[bold]Iteration {iteration}[/bold] {status}"]
         if result.session_result:
             duration_str = format_duration(result.session_result.duration_ms)
-            log_print(f"[dim]Cost: ${result.session_result.total_cost_usd:.4f}[/dim]")
-            log_print(f"[dim]Duration: {duration_str}[/dim]")
+            lines.append(f"[dim]Cost: ${result.session_result.total_cost_usd:.4f}[/dim]")
+            lines.append(f"[dim]Duration: {duration_str}[/dim]")
+        content = "\n".join(lines)
+        log_print(Panel(
+            content,
+            title=f"[bold blue]Iteration {iteration} Result[/bold blue]",
+            border_style="blue",
+        ))
     
     def on_text(text: str) -> None:
         nonlocal cli_started
@@ -337,7 +328,6 @@ async def run_loop(
         if iteration not in ndjson_files:
             output_path = get_output_path(iteration)
             ndjson_files[iteration] = open(output_path, 'w', encoding='utf-8')
-            log_print(f"[dim]NDJSON streaming to: {output_path}[/dim]")
         # Format JSON for readability
         line = line.strip()
         if line:
@@ -355,13 +345,14 @@ async def run_loop(
             ndjson_files[iteration].close()
             del ndjson_files[iteration]
     
-    loop_result = await orchestrator.run(
-        prompt,
+    loop_result = await orchestrator.run_sequences(
+        ralph_config,
         on_iteration=on_iteration,
         on_text=on_text,
         on_tool_call=on_tool_call,
         on_save_output=on_save_output,
         on_raw_line=on_raw_line,
+        on_iteration_start=on_iteration_start,
     )
     
     # Close any remaining file handles
@@ -387,7 +378,7 @@ async def run_loop(
         f"Iterations: {loop_result.iterations}\n"
         f"Duration: {duration_str}\n"
         f"Total Cost: ${loop_result.total_cost_usd:.4f}",
-        title="[bold]Loop Result[/bold]",
+        title="[bold]Sequence Execution Result[/bold]",
         border_style="blue" if loop_result.status == LoopStatus.COMPLETED else "yellow",
     ))
     
@@ -406,49 +397,60 @@ def main() -> int:
         parser.print_help()
         return 0
     
-    resume_id: Optional[str] = None
-    if getattr(args, "resume", None):
-        if args.resume == "latest":
-            resume_id = _find_latest_run_id()
-            if not resume_id:
-                print("Error: no previous session found to resume.")
-                return 0
-        else:
-            resume_id = args.resume
-    run_id = resume_id or str(uuid.uuid4())
+    run_id = str(uuid.uuid4())
     set_run_id(run_id)
 
     setup_logging()
     
     try:
         if args.command == "run":
-            # Get prompt
-            if args.prompt:
-                prompt = args.prompt
-            else:
-                try:
-                    prompt = load_prompt(args.file, args.directory)
-                except FileNotFoundError as e:
-                    log_print(f"[red]Error: {e}[/red]")
-                    return 0
+            # Check if using config file
+            # If --config is provided without value, use default "ralph.yaml"
+            config_file = args.config if args.config else None
+            if not config_file:
+                log_print("[red]Error: --config is required. Use --config or --config <path>[/red]")
+                return 0
+            
+            # Load configuration
+            try:
+                config_path = Path(config_file)
+                if not config_path.is_absolute():
+                    if args.directory:
+                        config_path = Path(args.directory) / config_path
+                    else:
+                        config_path = Path.cwd() / config_path
+                ralph_config = RalphConfig.load(config_path)
+            except FileNotFoundError as e:
+                log_print(f"[red]Error: {e}[/red]")
+                return 0
+            except Exception as e:
+                log_print(f"[red]Error loading configuration: {e}[/red]")
+                log_print_exception()
+                return 0
+            
+            if not ralph_config.repeat_sequences:
+                log_print("[yellow]Warning: No repeat_sequences found in configuration file[/yellow]")
+                return 0
+            
+            log_print(Panel(
+                f"Loaded {len(ralph_config.repeat_sequences)} sequence(s) from configuration",
+                title="[bold blue]Configuration Loaded[/bold blue]",
+                border_style="blue",
+            ))
             
             # Create backend
             backend = ClaudeBackend.default()
-            if resume_id:
-                backend.args.extend(["-r", resume_id])
-            else:
-                backend.args.extend(["--session-id", run_id])
+            backend.args.extend(["--session-id", run_id])
             
-            # Loop execution
-            config = OrchestratorConfig(
+            # Orchestrator config
+            orchestrator_config = OrchestratorConfig(
                 max_iterations=args.max_iterations,
                 iteration_timeout_secs=args.timeout,
-                break_marker=args.break_marker,
-                continue_marker=args.continue_marker,
                 working_directory=args.directory,
-                reset_session_iter=args.reset_session_iter,
             )
-            return asyncio.run(run_loop(prompt, backend, config))
+            
+            # Run sequences
+            return asyncio.run(run_sequences(ralph_config, backend, orchestrator_config))
         
         else:
             parser.print_help()
