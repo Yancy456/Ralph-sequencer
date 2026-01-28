@@ -137,7 +137,6 @@ def check_command_available() -> None:
             print("✓ ralph-py command is available")
             print("\n📖 Usage:")
             print("   ralph-py run -p \"your prompt\"")
-            print("   ralph-py stream -p \"your prompt\"")
             print("   ralph-py --help")
         else:
             print("⚠️  ralph-py command found but returned an error")

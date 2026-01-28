@@ -8,6 +8,7 @@ until a completion condition is met.
 import asyncio
 import logging
 import signal
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -33,12 +34,13 @@ class LoopStatus(Enum):
 class OrchestratorConfig:
     """Configuration for the orchestrator."""
     max_iterations: int = 10  # Maximum loop iterations
-    loop_timeout_secs: int = 3600  # Total timeout (1 hour default)
-    iteration_timeout_secs: int = 300  # Per-iteration timeout (5 min)
+    loop_timeout_secs: int = 0  # Total timeout (0 = no limit)
+    iteration_timeout_secs: int = 0  # Per-iteration timeout (0 = no limit)
     break_marker: str = "LOOP_BREAK"  # Marker to signal break
     continue_marker: str = "LOOP_CONTINUE"  # Marker to signal continue to next iteration
     working_directory: Optional[str] = None  # Working directory
     prompt_file: str = "PROMPT.md"  # Default prompt file
+    reset_session_iter: int = 5  # Reset session every N iterations (0 = never reset)
 
 
 @dataclass
@@ -57,6 +59,7 @@ IterationCallback = Callable[[int, ExecutionResult], None]
 TextCallback = Callable[[str], None]
 ToolCallback = Callable[[str, str, dict], None]
 SaveOutputCallback = Callable[[int, str], None]  # Callback to save output (iteration, output)
+RawLineCallback = Callable[[int, str], None]  # Callback for raw NDJSON lines (iteration, line)
 
 
 class Orchestrator:
@@ -94,6 +97,7 @@ class Orchestrator:
         on_text: Optional[TextCallback] = None,
         on_tool_call: Optional[ToolCallback] = None,
         on_save_output: Optional[SaveOutputCallback] = None,
+        on_raw_line: Optional[RawLineCallback] = None,
     ) -> LoopResult:
         """
         Run the orchestration loop.
@@ -103,7 +107,8 @@ class Orchestrator:
             on_iteration: Callback after each iteration
             on_text: Callback for streaming text
             on_tool_call: Callback for tool invocations
-            on_save_output: Callback to save output when LOOP_CONTINUE is detected
+            on_save_output: Callback to save output (iteration, output)
+            on_raw_line: Callback for raw NDJSON lines (real-time output)
             
         Returns:
             LoopResult with final status and statistics
@@ -138,8 +143,6 @@ class Orchestrator:
                 working_directory=self.config.working_directory,
             )
             
-            self._executor = ClaudeExecutor(self.backend, executor_config)
-            
             current_prompt = prompt
             
             while iterations < self.config.max_iterations:
@@ -153,9 +156,9 @@ class Orchestrator:
                         outputs=outputs,
                     )
                 
-                # Check total timeout
+                # Check total timeout (0 = no limit)
                 elapsed = time.time() - start_time
-                if elapsed > self.config.loop_timeout_secs:
+                if self.config.loop_timeout_secs > 0 and elapsed > self.config.loop_timeout_secs:
                     return LoopResult(
                         status=LoopStatus.TIMEOUT,
                         iterations=iterations,
@@ -167,12 +170,62 @@ class Orchestrator:
                 iterations += 1
                 logger.info(f"Starting iteration {iterations}")
                 
+                # Handle session management
+                reset_iter = self.config.reset_session_iter
+                should_reset = reset_iter > 0 and iterations > 1 and (iterations - 1) % reset_iter == 0
+                
+                if iterations == 1 or should_reset:
+                    # First iteration or reset: create new session
+                    new_session_id = str(uuid.uuid4())
+                    new_args = []
+                    skip_next = False
+                    for arg in self.backend.args:
+                        if skip_next:
+                            skip_next = False
+                            continue
+                        if arg in ("--session-id", "-r"):
+                            skip_next = True
+                            continue
+                        new_args.append(arg)
+                    new_args.extend(["--session-id", new_session_id])
+                    self.backend.args = new_args
+                    if should_reset:
+                        logger.info(f"Session reset at iteration {iterations}")
+                else:
+                    # Continue existing session: switch from --session-id to -r
+                    new_args = []
+                    skip_next = False
+                    session_id = None
+                    for arg in self.backend.args:
+                        if skip_next:
+                            session_id = arg
+                            skip_next = False
+                            continue
+                        if arg == "--session-id":
+                            skip_next = True
+                            continue
+                        new_args.append(arg)
+                    if session_id:
+                        new_args.extend(["-r", session_id])
+                    self.backend.args = new_args
+                
+                # Create executor for this iteration
+                self._executor = ClaudeExecutor(self.backend, executor_config)
+                
                 # Run Claude
                 try:
+                    # Wrap on_raw_line to include iteration number
+                    def make_raw_line_callback(iter_num: int):
+                        def callback(line: str):
+                            if on_raw_line:
+                                on_raw_line(iter_num, line)
+                        return callback
+                    
                     result = await self._executor.run(
                         current_prompt,
                         on_text=on_text,
                         on_tool_call=on_tool_call,
+                        on_raw_line=make_raw_line_callback(iterations),
                     )
                 except asyncio.CancelledError:
                     return LoopResult(
@@ -194,13 +247,14 @@ class Orchestrator:
                 if on_iteration:
                     on_iteration(iterations, result)
                 
+                # Save output for each iteration
+                if on_save_output and result.output:
+                    on_save_output(iterations, result.output)
+                
                 # Check for continue marker (before break check)
                 text_to_check = result.extracted_text or result.stripped_output
                 if self._check_continue(text_to_check):
                     logger.info(f"Continue marker found after {iterations} iterations, continuing to next iteration")
-                    # Save output before continuing
-                    if on_save_output and result.output:
-                        on_save_output(iterations, result.output)
                     continue  # Skip to next iteration
                 
                 # Check for break marker
@@ -245,12 +299,18 @@ class Orchestrator:
             self._executor = None
     
     def _check_break(self, output: str) -> bool:
-        """Check if the output contains the break marker."""
-        return self.config.break_marker in output
+        """Check if the output contains the break marker on its own line."""
+        for line in output.splitlines():
+            if line.strip() == self.config.break_marker:
+                return True
+        return False
     
     def _check_continue(self, output: str) -> bool:
-        """Check if the output contains the continue marker."""
-        return self.config.continue_marker in output
+        """Check if the output contains the continue marker on its own line."""
+        for line in output.splitlines():
+            if line.strip() == self.config.continue_marker:
+                return True
+        return False
     
     async def interrupt(self) -> None:
         """Interrupt the current execution."""

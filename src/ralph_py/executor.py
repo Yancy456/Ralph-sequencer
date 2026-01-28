@@ -57,6 +57,7 @@ class ExecutorConfig:
 EventCallback = Callable[[ClaudeStreamEvent], None]
 TextCallback = Callable[[str], None]
 ToolCallback = Callable[[str, str, dict[str, Any]], None]
+RawLineCallback = Callable[[str], None]  # Callback for raw NDJSON lines
 
 
 class ClaudeExecutor:
@@ -89,6 +90,7 @@ class ClaudeExecutor:
         on_text: Optional[TextCallback] = None,
         on_tool_call: Optional[ToolCallback] = None,
         on_event: Optional[EventCallback] = None,
+        on_raw_line: Optional[RawLineCallback] = None,
     ) -> ExecutionResult:
         """
         Run Claude with the given prompt.
@@ -98,6 +100,7 @@ class ClaudeExecutor:
             on_text: Callback for text content
             on_tool_call: Callback for tool invocations (name, id, input)
             on_event: Callback for raw stream events
+            on_raw_line: Callback for raw NDJSON lines (for real-time output)
             
         Returns:
             ExecutionResult with output and status
@@ -132,6 +135,10 @@ class ClaudeExecutor:
             if self._process.stdout:
                 async for line in self._read_lines(self._process.stdout):
                     output_lines.append(line)
+                    
+                    # Callback for raw line (real-time output)
+                    if on_raw_line:
+                        on_raw_line(line)
                     
                     # Parse NDJSON if applicable
                     if self.backend.output_format == OutputFormat.STREAM_JSON:

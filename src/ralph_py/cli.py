@@ -53,24 +53,16 @@ def format_duration(ms: int) -> str:
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.text import Text
 import re
 
 from ralph_py.claude_backend import ClaudeBackend
-from ralph_py.executor import ClaudeExecutor, ExecutorConfig, ExecutionResult
+from ralph_py.executor import ExecutionResult
 from ralph_py.orchestrator import Orchestrator, OrchestratorConfig, LoopStatus, load_prompt
 
 console = Console()
 _logger = None  # Will be set in setup_logging
 _file_logger = None  # File-only logger for log_print
-
-
-def _strip_rich_markup(text: str) -> str:
-    """Strip Rich markup tags from text."""
-    # Remove Rich markup like [bold], [cyan], [/bold], etc.
-    return re.sub(r'\[/?[^\]]+\]', '', text)
-
 
 def log_print(*args, **kwargs) -> None:
     """Print to console and also log to file."""
@@ -87,8 +79,6 @@ def log_print(*args, **kwargs) -> None:
         plain_text = buffer.getvalue()
         buffer.close()
         
-        # Strip ANSI codes and clean up
-        plain_text = _strip_rich_markup(plain_text)
         # Remove extra whitespace but preserve line breaks
         lines = [line.strip() for line in plain_text.split('\n') if line.strip()]
         for line in lines:
@@ -247,7 +237,7 @@ def create_parser() -> argparse.ArgumentParser:
         help="Prompt file to read (default: PROMPT.md)",
     )
     run_parser.add_argument(
-        "--max-iterations",
+        "-m", "--max-iterations",
         type=int,
         default=1,
         help="Maximum loop iterations (default: 1)",
@@ -281,92 +271,14 @@ def create_parser() -> argparse.ArgumentParser:
         const="latest",
         help="Resume the most recent session or a specific session UUID",
     )
-    
-    # Stream command (single execution with streaming output)
-    stream_parser = subparsers.add_parser("stream", help="Run Claude with streaming output")
-    stream_parser.add_argument(
-        "-p", "--prompt",
-        type=str,
-        required=True,
-        help="Prompt to execute",
-    )
-    stream_parser.add_argument(
-        "--timeout",
+    run_parser.add_argument(
+        "--reset-session-iter",
         type=int,
-        default=0,
-        help="Timeout in seconds (default: 300)",
-    )
-    stream_parser.add_argument(
-        "-C", "--directory",
-        type=str,
-        help="Working directory for execution",
-    )
-    stream_parser.add_argument(
-        "-r", "--resume",
-        nargs="?",
-        const="latest",
-        help="Resume the most recent session or a specific session UUID",
+        default=1,
+        help="Reset session every N iterations to clear history (0, never reset). Default 1, reset session every iteration.",
     )
     
     return parser
-
-
-async def run_single(
-    prompt: str,
-    backend: ClaudeBackend,
-    config: ExecutorConfig,
-) -> int:
-    """Run a single execution."""
-    log_print(Panel(
-        Text(prompt[:500] + "..." if len(prompt) > 500 else prompt),
-        title="[bold blue]Prompt[/bold blue]",
-        border_style="blue",
-    ))
-    
-    executor = ClaudeExecutor(backend, config)
-    cli_started = False
-    
-    def on_text(text: str) -> None:
-        nonlocal cli_started
-        if not cli_started:
-            log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
-            cli_started = True
-        log_print(f"[cyan]\\[msg][/cyan] {text}")
-    
-    def on_tool_call(name: str, tool_id: str, inputs: dict) -> None:
-        nonlocal cli_started
-        if not cli_started:
-            log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
-            cli_started = True
-        detail = _get_tool_detail(name, inputs)
-        log_print(f"[yellow]\\[{name}][/yellow]{detail}")
-    
-    result = await executor.run(
-        prompt,
-        on_text=on_text,
-        on_tool_call=on_tool_call,
-    )
-    if cli_started:
-        log_print("[bold magenta]<<< claude CLI end <<<[/bold magenta]\n")
-    
-    # Save NDJSON output to file
-    if result.output:
-        output_path = get_output_path()
-        output_path.write_text(format_ndjson(result.output), encoding='utf-8')
-        log_print(f"[dim]NDJSON saved to: {output_path}[/dim]")
-    
-    # Print result summary
-    if result.session_result:
-        duration_str = format_duration(result.session_result.duration_ms)
-        log_print(Panel(
-            f"Duration: {duration_str}\n"
-            f"Cost: ${result.session_result.total_cost_usd:.4f}\n"
-            f"Turns: {result.session_result.num_turns}",
-            title="[bold green]Session Complete[/bold green]",
-            border_style="green",
-        ))
-    
-    return 0
 
 
 async def run_loop(
@@ -417,11 +329,31 @@ async def run_loop(
         detail = _get_tool_detail(name, inputs)
         log_print(f"[yellow]\\[{name}][/yellow]{detail}")
     
+    # Track open file handles for real-time NDJSON output
+    ndjson_files: dict[int, any] = {}
+    
+    def on_raw_line(iteration: int, line: str) -> None:
+        """Write formatted NDJSON line to file in real-time."""
+        if iteration not in ndjson_files:
+            output_path = get_output_path(iteration)
+            ndjson_files[iteration] = open(output_path, 'w', encoding='utf-8')
+            log_print(f"[dim]NDJSON streaming to: {output_path}[/dim]")
+        # Format JSON for readability
+        line = line.strip()
+        if line:
+            try:
+                obj = json.loads(line)
+                formatted = json.dumps(obj, indent=2, ensure_ascii=False)
+                ndjson_files[iteration].write(formatted + '\n\n')
+            except json.JSONDecodeError:
+                ndjson_files[iteration].write(line + '\n')
+            ndjson_files[iteration].flush()  # Ensure immediate write
+    
     def on_save_output(iteration: int, output: str) -> None:
-        """Save output when LOOP_CONTINUE is detected."""
-        output_path = get_output_path(iteration)
-        output_path.write_text(format_ndjson(output), encoding='utf-8')
-        log_print(f"[dim]NDJSON saved to: {output_path}[/dim]")
+        """Close file handle after iteration."""
+        if iteration in ndjson_files:
+            ndjson_files[iteration].close()
+            del ndjson_files[iteration]
     
     loop_result = await orchestrator.run(
         prompt,
@@ -429,16 +361,16 @@ async def run_loop(
         on_text=on_text,
         on_tool_call=on_tool_call,
         on_save_output=on_save_output,
+        on_raw_line=on_raw_line,
     )
+    
+    # Close any remaining file handles
+    for f in ndjson_files.values():
+        f.close()
+    ndjson_files.clear()
     # End CLI section if still open
     if cli_started:
         log_print("[bold magenta]<<< claude CLI end <<<[/bold magenta]\n")
-    
-    # Save NDJSON output to file
-    if loop_result.outputs:
-        output_path = get_output_path()
-        output_path.write_text(format_ndjson("\n".join(loop_result.outputs)), encoding='utf-8')
-        log_print(f"[dim]NDJSON saved to: {output_path}[/dim]")
     
     # Print final summary
     status_emoji = {
@@ -461,58 +393,6 @@ async def run_loop(
     
     if loop_result.error:
         log_print(f"[red]Error: {loop_result.error}[/red]")
-    
-    return 0
-
-
-async def run_stream(
-    prompt: str,
-    backend: ClaudeBackend,
-    config: ExecutorConfig,
-) -> int:
-    """Run with streaming output."""
-    executor = ClaudeExecutor(backend, config)
-    
-    cli_started = False
-    
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-        transient=True,
-    ) as progress:
-        task = progress.add_task("Running Claude...", total=None)
-        
-        def on_text(text: str) -> None:
-            nonlocal cli_started
-            progress.stop()
-            if not cli_started:
-                log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
-                cli_started = True
-            log_print(f"[cyan]\\[msg][/cyan] {text}")
-        
-        def on_tool_call(name: str, tool_id: str, inputs: dict) -> None:
-            nonlocal cli_started
-            if not cli_started:
-                log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
-                cli_started = True
-            detail = _get_tool_detail(name, inputs)
-            log_print(f"[yellow]\\[{name}][/yellow]{detail}")
-        
-        result = await executor.run(
-            prompt,
-            on_text=on_text,
-            on_tool_call=on_tool_call,
-        )
-    
-    if cli_started:
-        log_print("[bold magenta]<<< claude CLI end <<<[/bold magenta]\n")
-    
-    # Save NDJSON output to file
-    if result.output:
-        output_path = get_output_path()
-        output_path.write_text(format_ndjson(result.output), encoding='utf-8')
-        log_print(f"[dim]NDJSON saved to: {output_path}[/dim]")
     
     return 0
 
@@ -566,20 +446,9 @@ def main() -> int:
                 break_marker=args.break_marker,
                 continue_marker=args.continue_marker,
                 working_directory=args.directory,
+                reset_session_iter=args.reset_session_iter,
             )
             return asyncio.run(run_loop(prompt, backend, config))
-        
-        elif args.command == "stream":
-            backend = ClaudeBackend.default()
-            if resume_id:
-                backend.args.extend(["-r", resume_id])
-            else:
-                backend.args.extend(["--session-id", run_id])
-            config = ExecutorConfig(
-                idle_timeout_secs=args.timeout,
-                working_directory=args.directory,
-            )
-            return asyncio.run(run_stream(args.prompt, backend, config))
         
         else:
             parser.print_help()

@@ -44,18 +44,12 @@ ralph-py run
 # 从自定义文件运行
 ralph-py run -f my_prompt.txt
 
-# 单次执行（不循环）
-ralph-py run -p "List files" --single
-
 # 指定工作目录
 ralph-py run -p "Fix the bug" -C /path/to/project
 
 # 恢复最近对话或指定 UUID
 ralph-py run -r
 ralph-py run -r 550e8400-e29b-41d4-a716-446655440000
-
-# 流式输出
-ralph-py stream -p "Explain this code"
 ```
 
 
