@@ -24,6 +24,7 @@ class SequenceStep:
     role: str
     prompt: Optional[str] = None
     new_session: bool = False
+    interactive: bool = False
 
 
 @dataclass
@@ -38,6 +39,7 @@ class RalphConfig:
     """Complete configuration from ralph.yaml."""
     roles: dict[str, Role] = field(default_factory=dict)
     repeat_sequences: list[RepeatSequence] = field(default_factory=list)
+    interactive: bool = False
     
     @classmethod
     def load(cls, config_path: str | Path) -> "RalphConfig":
@@ -63,6 +65,9 @@ class RalphConfig:
         
         if not data:
             return cls()
+        
+        # Parse global options
+        interactive = data.get("interactive", False)
         
         # Parse roles
         roles = {}
@@ -91,13 +96,14 @@ class RalphConfig:
                                     role=step_data["role"],
                                     prompt=prompt,
                                     new_session=step_data.get("new_session", True),
+                                    interactive=step_data.get("interactive", False),
                                 )
                                 steps.append(step)
                     
                     repeat = seq_data.get("repeat", 1)
                     repeat_sequences.append(RepeatSequence(steps=steps, repeat=repeat))
         
-        return cls(roles=roles, repeat_sequences=repeat_sequences)
+        return cls(roles=roles, repeat_sequences=repeat_sequences, interactive=interactive)
     
     def get_role_prompt(self, role_name: str, working_directory: Optional[str] = None) -> Optional[str]:
         """

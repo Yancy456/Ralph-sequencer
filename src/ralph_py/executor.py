@@ -9,11 +9,11 @@ import asyncio
 import logging
 import os
 import signal
-from dataclasses import dataclass
+import tempfile
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import AsyncIterator, Callable, Optional, Any
 
-from ralph_py.claude_backend import ClaudeBackend, OutputFormat
 from ralph_py.exceptions import RalphExitRequested, RalphContinueRequested
 from ralph_py.stream_parser import (
     ClaudeStreamParser,
@@ -26,6 +26,12 @@ from ralph_py.stream_parser import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class OutputFormat(Enum):
+    """Output format supported by Claude CLI."""
+    TEXT = "text"  # Plain text output
+    STREAM_JSON = "stream-json"  # Newline-delimited JSON stream
 
 
 class TerminationType(Enum):
@@ -50,8 +56,18 @@ class ExecutionResult:
 @dataclass
 class ExecutorConfig:
     """Configuration for executor."""
+    # Command configuration
+    command: str = "claude"
+    output_format: OutputFormat = OutputFormat.STREAM_JSON
+    
+    # Session configuration
+    resume: bool = False  # Whether to resume a session (-r flag)
+    session_id: Optional[str] = None  # Session ID for resume
+    
+    # Execution configuration
     idle_timeout_secs: int = 300  # 5 minutes default
     working_directory: Optional[str] = None  # Working directory for command
+    interactive: bool = False  # Whether to allow interactive input
 
 
 # Type alias for event callbacks
@@ -70,20 +86,53 @@ class ClaudeExecutor:
     
     def __init__(
         self, 
-        backend: Optional[ClaudeBackend] = None,
         config: Optional[ExecutorConfig] = None,
     ):
         """
         Initialize the executor.
         
         Args:
-            backend: CLI backend configuration (defaults to Claude)
             config: Executor configuration
         """
-        self.backend = backend or ClaudeBackend.default()
         self.config = config or ExecutorConfig()
         self._process: Optional[asyncio.subprocess.Process] = None
         self._interrupted = False
+    
+    def _build_command(
+        self, 
+        prompt: str
+    ) -> tuple[list[str], Optional[str], Optional[tempfile.NamedTemporaryFile]]:
+        """
+        Build the full command with arguments for execution.
+        
+        Args:
+            prompt: The prompt text to pass to Claude
+            
+        Returns:
+            Tuple of (command_args, stdin_input, temp_file)
+            - command_args: Full command line as a list
+            - stdin_input: Input to write to stdin (None for arg mode)
+            - temp_file: Temporary file object to keep alive (for large prompts)
+        """
+        args = [
+            "--dangerously-skip-permissions",
+            "--verbose",
+            "--output-format",
+            "stream-json",
+        ]
+
+        # Add resume flag only if resume is True
+        if self.config.resume:
+            args.extend(["-r", self.config.session_id])
+        
+        elif self.config.session_id:
+            args.extend(["--session-id", self.config.session_id])
+        
+        # Add prompt flag and prompt
+        args.append("-p")
+        args.append(prompt)
+        
+        return [self.config.command] + args, None, None
     
     async def run(
         self,
@@ -107,8 +156,7 @@ class ClaudeExecutor:
             ExecutionResult with output and status
         """
         # Build command
-        cmd_args, stdin_input, temp_file = self.backend.build_command(prompt)
-        
+        cmd_args, stdin_input, temp_file = self._build_command(prompt)
         logger.debug(f"Executing: {' '.join(cmd_args)}")
         
         try:
@@ -142,7 +190,7 @@ class ClaudeExecutor:
                         on_raw_line(line)
                     
                     # Parse NDJSON if applicable
-                    if self.backend.output_format == OutputFormat.STREAM_JSON:
+                    if self.config.output_format == OutputFormat.STREAM_JSON:
                         event = ClaudeStreamParser.parse_line(line)
                         if event:
                             # Dispatch callbacks

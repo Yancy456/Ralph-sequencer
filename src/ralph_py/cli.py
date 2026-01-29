@@ -9,7 +9,6 @@ Usage:
 
 import argparse
 import asyncio
-import io
 import shutil
 import json
 import logging
@@ -21,10 +20,6 @@ from pathlib import Path
 from typing import Optional
 
 OUTPUT_DIR = Path(".ralph_debug")
-
-# Global variables to store the current run context
-_current_run_dir: Optional[Path] = None
-_current_run_id: Optional[str] = None
 
 
 def format_ndjson(raw_output: str) -> str:
@@ -50,49 +45,22 @@ def format_duration(ms: int) -> str:
     seconds = total_seconds % 60
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-from rich.console import Console
-from rich.logging import RichHandler
 from rich.panel import Panel
 import re
 
-from ralph_py.claude_backend import ClaudeBackend
 from ralph_py.config import RalphConfig, Role, RepeatSequence, SequenceStep
 from ralph_py.exceptions import RalphExitRequested, RalphContinueRequested
 from ralph_py.executor import ExecutionResult
 from ralph_py.orchestrator import Orchestrator, OrchestratorConfig, LoopStatus
-
-console = Console()
-_logger = None  # Will be set in setup_logging
-_file_logger = None  # File-only logger for log_print
-
-def log_print(*args, **kwargs) -> None:
-    """Print to console and also log to file."""
-    # Print to console first
-    console.print(*args, **kwargs)
-    
-    # Also log to file (strip Rich markup for plain text logging)
-    # Use file_logger to avoid duplicate console output from RichHandler
-    if _file_logger:
-        # Use a StringIO buffer to capture plain text output
-        buffer = io.StringIO()
-        temp_console = Console(file=buffer, force_terminal=False, legacy_windows=False)
-        temp_console.print(*args, **kwargs)
-        plain_text = buffer.getvalue()
-        buffer.close()
-        
-        # Remove extra whitespace but preserve line breaks
-        lines = [line.strip() for line in plain_text.split('\n') if line.strip()]
-        for line in lines:
-            if line:
-                _file_logger.info(line)
-
-
-def log_print_exception() -> None:
-    """Print exception to console and also log to file."""
-    console.print_exception()
-    if _logger:
-        import traceback
-        _logger.exception("Exception occurred")
+from ralph_py.logging_system import (
+    console,
+    log_print,
+    log_print_exception,
+    setup_logging,
+    set_run_id,
+    get_run_id,
+    get_run_dir,
+)
 
 
 def _get_tool_detail(name: str, inputs: dict) -> str:
@@ -108,48 +76,12 @@ def _get_tool_detail(name: str, inputs: dict) -> str:
     return ""
 
 
-def get_run_dir() -> Path:
-    """Get or create the current run directory."""
-    global _current_run_dir
-    if _current_run_dir is None:
-        OUTPUT_DIR.mkdir(exist_ok=True)
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        _current_run_dir = OUTPUT_DIR / timestamp
-        _current_run_dir.mkdir(exist_ok=True)
-    return _current_run_dir
-
-
 def get_output_path(iteration: Optional[int] = None) -> Path:
     """Generate output file path in the current run directory."""
     run_dir = get_run_dir()
     if iteration is not None:
         return run_dir / f"iteration_{iteration}.ndjson"
     return run_dir / "output.ndjson"
-
-
-def get_log_path() -> Path:
-    """Generate log file path in the current run directory."""
-    run_dir = get_run_dir()
-    if _current_run_id:
-        return run_dir / f"{_current_run_id}.log"
-    return run_dir / "run.log"
-
-
-def _sanitize_run_id(run_id: str) -> str:
-    """Sanitize run id for filesystem usage."""
-    safe_id = run_id.strip()
-    if os.sep:
-        safe_id = safe_id.replace(os.sep, "_")
-    if os.altsep:
-        safe_id = safe_id.replace(os.altsep, "_")
-    return safe_id
-
-
-def set_run_id(run_id: str) -> None:
-    """Initialize the run id."""
-    global _current_run_id
-    safe_id = _sanitize_run_id(run_id)
-    _current_run_id = safe_id
 
 
 def save_config_snapshot(config_path: Path) -> Path:
@@ -177,7 +109,7 @@ def save_iteration_state(
     state_path = run_dir / "state.json"
     state = {
         "config_path": str(config_path),
-        "run_id": _current_run_id,
+        "run_id": get_run_id(),
         "iteration": iteration,
         "step_info": step_info,
         "role": role,
@@ -214,54 +146,6 @@ def load_last_state() -> Optional[dict]:
                 _logger.warning("Failed to read state file from %s", state_path)
                 continue
     return None
-
-
-def setup_logging() -> None:
-    """Set up logging with rich handler and file handler."""
-    level = logging.INFO
-    log_path = get_log_path()
-    
-    # Create handlers
-    handlers = [
-        RichHandler(
-            console=console, 
-            rich_tracebacks=False, 
-            show_time=False, 
-            show_level=False,
-        ),
-        logging.FileHandler(log_path, encoding='utf-8'),
-    ]
-    
-    # File handler format with timestamp
-    file_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    handlers[1].setFormatter(file_formatter)
-    
-    logging.basicConfig(
-        level=level,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=handlers,
-    )
-    
-    global _logger, _file_logger
-    _logger = logging.getLogger(__name__)
-    
-    # Create a file-only logger for log_print to avoid duplicate console output
-    _file_logger = logging.getLogger(f"{__name__}.file_only")
-    _file_logger.setLevel(level)
-    # Remove all handlers to avoid console output
-    _file_logger.handlers = []
-    # Add only file handler
-    file_handler = logging.FileHandler(log_path, encoding='utf-8')
-    file_handler.setFormatter(file_formatter)
-    _file_logger.addHandler(file_handler)
-    _file_logger.propagate = False  # Don't propagate to root logger
-    
-    # Log file path only to file, not to console to avoid showing file paths
-    _file_logger.info(f"Log file: {log_path}")
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -321,14 +205,13 @@ def create_parser() -> argparse.ArgumentParser:
 
 async def run_sequences(
     ralph_config: RalphConfig,
-    backend: ClaudeBackend,
     config: OrchestratorConfig,
     config_path: Path,
 ) -> int:
     """Run sequences from configuration."""
     logger = logging.getLogger(__name__)
     
-    orchestrator = Orchestrator(backend, config)
+    orchestrator = Orchestrator(config)
     cli_started = False
     
     def on_iteration_start(
@@ -368,11 +251,6 @@ async def run_sequences(
         ))
     
     def on_iteration(iteration: int, result: ExecutionResult) -> None:
-        nonlocal cli_started
-        # End CLI section if started
-        if cli_started:
-            log_print("[bold magenta]<<< claude CLI end <<<[/bold magenta]")
-            cli_started = False
         status = "✓" if result.success else "✗"
         lines = [f"[bold]Iteration {iteration}[/bold] {status}"]
         if result.session_result:
@@ -387,18 +265,9 @@ async def run_sequences(
         ))
     
     def on_text(text: str) -> None:
-        nonlocal cli_started
-        if not cli_started:
-            log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
-            cli_started = True
         log_print(f"[cyan]\\[msg][/cyan] {text}")
     
     def on_tool_call(name: str, tool_id: str, inputs: dict) -> None:
-        nonlocal cli_started
-        if not cli_started:
-            log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
-            cli_started = True
-        
         detail = _get_tool_detail(name, inputs)
         log_print(f"[yellow]\\[{name}][/yellow]{detail}")
         # If model invokes Bash with "ralph-py exit" or "ralph-py continue", signal loop/step exit
@@ -565,10 +434,6 @@ def main() -> int:
                     border_style="blue",
                 ))
             
-            # Create backend
-            backend = ClaudeBackend.default()
-            backend.args.extend(["--session-id", run_id])
-            
             # Determine resume point if requested
             resume_from_iteration = 0
             if args.resume and not args.prompt:
@@ -590,10 +455,11 @@ def main() -> int:
                 iteration_timeout_secs=args.timeout,
                 working_directory=args.directory,
                 resume_from_iteration=resume_from_iteration,
+                session_id=run_id,
             )
             
             # Run sequences
-            return asyncio.run(run_sequences(ralph_config, backend, orchestrator_config, config_path))
+            return asyncio.run(run_sequences(ralph_config, orchestrator_config, config_path))
         
         else:
             parser.print_help()

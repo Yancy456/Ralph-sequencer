@@ -7,7 +7,6 @@ similar to the Rust-based ralph-orchestrator.
 
 __version__ = "0.1.0"
 
-from ralph_py.claude_backend import ClaudeBackend, OutputFormat, PromptMode
 from ralph_py.stream_parser import (
     AssistantMessage,
     ClaudeStreamEvent,
@@ -22,13 +21,10 @@ from ralph_py.executor import (
     ExecutorConfig,
     ExecutionResult,
     TerminationType,
+    OutputFormat,
 )
 
 __all__ = [
-    # Backend
-    "ClaudeBackend",
-    "OutputFormat",
-    "PromptMode",
     # Stream Parser
     "ClaudeStreamParser",
     "ClaudeStreamEvent",
@@ -42,4 +38,5 @@ __all__ = [
     "ExecutorConfig",
     "ExecutionResult",
     "TerminationType",
+    "OutputFormat",
 ]

@@ -14,10 +14,17 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
 
-from ralph_py.claude_backend import ClaudeBackend
+from prompt_toolkit import PromptSession
+from prompt_toolkit.styles import Style
+
 from ralph_py.config import RalphConfig, RepeatSequence, SequenceStep
 from ralph_py.exceptions import RalphExitRequested, RalphContinueRequested
 from ralph_py.executor import ClaudeExecutor, ExecutorConfig, ExecutionResult
+from ralph_py.logging_system import log_print
+# Style for the chat prompt
+_chat_prompt_style = Style.from_dict({
+    'prompt': '#ffcc00',  # Yellow color
+})
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +50,7 @@ class OrchestratorConfig:
     prompt_file: str = "PROMPT.md"  # Default prompt file
     reset_session_iter: int = 5  # Reset session every N iterations (0 = never reset)
     resume_from_iteration: int = 0  # Number of iterations to skip (0 = no resume)
+    session_id: Optional[str] = None  # Session ID for the run
 
 
 @dataclass
@@ -78,17 +86,14 @@ class Orchestrator:
     
     def __init__(
         self,
-        backend: Optional[ClaudeBackend] = None,
         config: Optional[OrchestratorConfig] = None,
     ):
         """
         Initialize the orchestrator.
         
         Args:
-            backend: CLI backend configuration
             config: Orchestrator configuration
         """
-        self.backend = backend or ClaudeBackend.default()
         self.config = config or OrchestratorConfig()
         self._interrupted = False
         self._executor: Optional[ClaudeExecutor] = None
@@ -147,12 +152,6 @@ class Orchestrator:
             pass
         
         try:
-            # Create executor
-            executor_config = ExecutorConfig(
-                idle_timeout_secs=self.config.iteration_timeout_secs,
-                working_directory=self.config.working_directory,
-            )
-            
             # Execute each repeat sequence
             for seq_idx, repeat_seq in enumerate(config.repeat_sequences):
                 if self._interrupted:
@@ -267,26 +266,23 @@ class Orchestrator:
                         
                         # Always create a new session for each step
                         new_session_id = str(uuid.uuid4())
-                        new_args = []
-                        skip_next = False
-                        for arg in self.backend.args:
-                            if skip_next:
-                                skip_next = False
-                                continue
-                            if arg in ("--session-id", "-r"):
-                                skip_next = True
-                                continue
-                            new_args.append(arg)
-                        new_args.extend(["--session-id", new_session_id])
-                        self.backend.args = new_args
                         # Session creation info is now surfaced by CLI
                         logger.debug(f"New session created for step {iterations}")
                         
+                        # Create executor config for this step (new session, no resume)
+                        executor_config = ExecutorConfig(
+                            idle_timeout_secs=self.config.iteration_timeout_secs,
+                            working_directory=self.config.working_directory,
+                            resume=None,  # New session, don't resume
+                            session_id=new_session_id,
+                        )
+                        
                         # Create executor for this step
-                        self._executor = ClaudeExecutor(self.backend, executor_config)
+                        self._executor = ClaudeExecutor(executor_config)
                         
                         # Run Claude
                         try:
+                            
                             # Wrap on_raw_line to include iteration number
                             def make_raw_line_callback(iter_num: int):
                                 def callback(line: str):
@@ -294,12 +290,56 @@ class Orchestrator:
                                         on_raw_line(iter_num, line)
                                 return callback
                             
-                            result = await self._executor.run(
-                                prompt,
-                                on_text=on_text,
-                                on_tool_call=on_tool_call,
-                                on_raw_line=make_raw_line_callback(iterations),
-                            )
+                            current_prompt = prompt
+                            cli_started=False   
+                            while True:
+                                if not cli_started:
+                                    log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
+                                    cli_started = True
+                                log_print("[bold green]Processing...[/bold green]")
+                                result = await self._executor.run(
+                                    current_prompt,
+                                    on_text=on_text,
+                                    on_tool_call=on_tool_call,
+                                    on_raw_line=make_raw_line_callback(iterations),
+                                )
+                                # Use step-level interactive config, fallback to global config
+                                is_interactive = step.interactive
+                                if not is_interactive:
+                                    break
+                                
+                                try:
+                                    log_print("[yellow]Chat Mode (type \'exit\' to end; Alt+Enter to submit)[/yellow]")
+                                    session = PromptSession(style=_chat_prompt_style)
+                                    user_input = (await session.prompt_async(
+                                        [('class:prompt', '>>> ')],
+                                        multiline=True,
+                                    )).strip()
+                                except (EOFError, KeyboardInterrupt):
+                                    break
+                                
+                                if user_input.lower() == "exit":
+                                    break
+                                
+                                # Update prompt for next run in same session
+                                current_prompt = user_input
+                                
+                                # Create executor config with resume=True for subsequent runs in same session
+                                resume_executor_config = ExecutorConfig(
+                                    idle_timeout_secs=self.config.iteration_timeout_secs,
+                                    working_directory=self.config.working_directory,
+                                    resume=True,  # Resume the session
+                                    session_id=new_session_id,
+                                )
+                                
+                                # Create a new executor for the next interaction in the same session
+                                self._executor = ClaudeExecutor(resume_executor_config)
+                            
+                            # End CLI section if started
+                            if cli_started:
+                                log_print("[bold magenta]<<< claude CLI end <<<[/bold magenta]")
+                                cli_started = False
+                                
                         except asyncio.CancelledError:
                             return LoopResult(
                                 status=LoopStatus.INTERRUPTED,
@@ -362,31 +402,3 @@ class Orchestrator:
             except (NotImplementedError, ValueError):
                 pass
             self._executor = None
-
-
-def load_prompt(
-    prompt_file: str = "PROMPT.md",
-    working_directory: Optional[str] = None,
-) -> str:
-    """
-    Load prompt from a file.
-    
-    Args:
-        prompt_file: Path to prompt file (relative to working_directory)
-        working_directory: Base directory (defaults to current directory)
-        
-    Returns:
-        Prompt content as string
-        
-    Raises:
-        FileNotFoundError: If prompt file doesn't exist
-    """
-    if working_directory:
-        path = Path(working_directory) / prompt_file
-    else:
-        path = Path(prompt_file)
-    
-    if not path.exists():
-        raise FileNotFoundError(f"Prompt file not found: {path}")
-    
-    return path.read_text(encoding='utf-8')

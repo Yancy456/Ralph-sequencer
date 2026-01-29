@@ -1,17 +1,8 @@
-roles:
-  - role: writer
-    prompt_file: prompts/writer.md
-    
-  - role: reviewer
-    prompt_file: prompts/reviewer.md
 
 repeat_sequence:
     - sequence: 
         - role: writer
-          prompt: 浏览当前文件夹，并输出分析源代码。
-        - role: reviewer
-      repeat: 3
-    - sequence: 
-        - role: writer
-          prompt: 这是一个模拟测试程序，你需要阅读并修改@fix_plan.md文件。你的任务就是直接编辑该文件，然后记录任务结束小时分钟。这是一个测试程序，不要干其他无关的事情。
-      repeat: 5
+          prompt: 你好
+          interactive: true
+        
+
