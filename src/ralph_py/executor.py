@@ -14,6 +14,7 @@ from enum import Enum
 from typing import AsyncIterator, Callable, Optional, Any
 
 from ralph_py.claude_backend import ClaudeBackend, OutputFormat
+from ralph_py.exceptions import RalphExitRequested, RalphContinueRequested
 from ralph_py.stream_parser import (
     ClaudeStreamParser,
     AssistantEvent,
@@ -156,7 +157,13 @@ class ClaudeExecutor:
                                             on_text(block.text)
                                     elif isinstance(block, ToolUseContent):
                                         if on_tool_call:
-                                            on_tool_call(block.name, block.id, block.input)
+                                            try:
+                                                on_tool_call(block.name, block.id, block.input)
+                                            except (RalphExitRequested, RalphContinueRequested):
+                                                if self._process:
+                                                    self._process.terminate()
+                                                    await self._process.wait()
+                                                raise
                             
                             elif isinstance(event, ResultEvent):
                                 session_result = SessionResult(

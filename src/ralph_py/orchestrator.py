@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from ralph_py.claude_backend import ClaudeBackend
-from ralph_py.executor import ClaudeExecutor, ExecutorConfig, ExecutionResult
 from ralph_py.config import RalphConfig, RepeatSequence, SequenceStep
+from ralph_py.exceptions import RalphExitRequested, RalphContinueRequested
+from ralph_py.executor import ClaudeExecutor, ExecutorConfig, ExecutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ class LoopStatus(Enum):
     TIMEOUT = "timeout"
     INTERRUPTED = "interrupted"
     ERROR = "error"
+    RALPH_EXIT_REQUESTED = "RalphExitRequested"
+    RALPH_CONTINUE_REQUESTED = "RalphContinueRequested"
 
 
 @dataclass
@@ -39,6 +42,7 @@ class OrchestratorConfig:
     working_directory: Optional[str] = None  # Working directory
     prompt_file: str = "PROMPT.md"  # Default prompt file
     reset_session_iter: int = 5  # Reset session every N iterations (0 = never reset)
+    resume_from_iteration: int = 0  # Number of iterations to skip (0 = no resume)
 
 
 @dataclass
@@ -54,7 +58,8 @@ class LoopResult:
 
 # Callback types
 IterationCallback = Callable[[int, ExecutionResult], None]
-IterationStartCallback = Callable[[int, str, str, str], None]
+# iteration, sequence_info, step_info, role, prompt_preview
+IterationStartCallback = Callable[[int, str, str, str, str], None]
 TextCallback = Callable[[str], None]
 ToolCallback = Callable[[str, str, dict], None]
 SaveOutputCallback = Callable[[int, str], None]  # Callback to save output (iteration, output)
@@ -98,11 +103,11 @@ class Orchestrator:
         self,
         config: RalphConfig,
         on_iteration: Optional[IterationCallback] = None,
-        on_text: Optional[TextCallback] = None,
-        on_tool_call: Optional[ToolCallback] = None,
-        on_save_output: Optional[SaveOutputCallback] = None,
-        on_raw_line: Optional[RawLineCallback] = None,
-        on_iteration_start: Optional[IterationStartCallback] = None,
+            on_text: Optional[TextCallback] = None,
+            on_tool_call: Optional[ToolCallback] = None,
+            on_save_output: Optional[SaveOutputCallback] = None,
+            on_raw_line: Optional[RawLineCallback] = None,
+            on_iteration_start: Optional[IterationStartCallback] = None,
     ) -> LoopResult:
         """
         Run repeat sequences from configuration.
@@ -195,22 +200,34 @@ class Orchestrator:
                                 outputs=outputs,
                             )
                         
-                        iterations += 1
+                        next_iteration = iterations + 1
+                        # Skip iterations if resuming from a previous run
+                        if self.config.resume_from_iteration and next_iteration <= self.config.resume_from_iteration:
+                            iterations = next_iteration
+                            logger.debug(
+                                "Skipping iteration %d during resume (step %d/%d, sequence %d/%d, repeat %d/%d)",
+                                iterations,
+                                step_idx + 1,
+                                len(repeat_seq.steps),
+                                seq_idx + 1,
+                                len(config.repeat_sequences),
+                                repeat_num + 1,
+                                repeat_seq.repeat,
+                            )
+                            continue
+                        
+                        iterations = next_iteration
                         # Step-level info is now handled by CLI via on_iteration_start
                         logger.debug(
-                            f"Step {step_idx + 1}/{len(repeat_seq.steps)} of sequence {seq_idx + 1}, "
-                            f"repeat {repeat_num + 1}/{repeat_seq.repeat}"
+                            "Executing iteration %d (step %d/%d, sequence %d/%d, repeat %d/%d)",
+                            iterations,
+                            step_idx + 1,
+                            len(repeat_seq.steps),
+                            seq_idx + 1,
+                            len(config.repeat_sequences),
+                            repeat_num + 1,
+                            repeat_seq.repeat,
                         )
-                        
-                        # Notify iteration start with detailed info (step + role)
-                        if on_iteration_start:
-                            sequence_info = ""
-                            step_info = (
-                                f"Step {step_idx + 1}/{len(repeat_seq.steps)} of sequence {seq_idx + 1}, "
-                                f"repeat {repeat_num + 1}/{repeat_seq.repeat}"
-                            )
-                            role_name = step.role
-                            on_iteration_start(iterations, sequence_info, step_info, role_name)
                         
                         # Get prompt for this step
                         prompt = step.prompt
@@ -220,6 +237,33 @@ class Orchestrator:
                             if not prompt:
                                 logger.warning(f"No prompt found for role '{step.role}', skipping step")
                                 continue
+
+                        # Build a single-line prompt preview (long text truncated with ellipsis)
+                        prompt_preview = ""
+                        if isinstance(prompt, str):
+                            single_line = " ".join(prompt.splitlines()).strip()
+                            max_len = 120
+                            if len(single_line) > max_len:
+                                prompt_preview = single_line[: max_len - 1] + "…"
+                            else:
+                                prompt_preview = single_line
+                        
+                        # Notify iteration start with detailed info (step + role + prompt preview)
+                        if on_iteration_start:
+                            sequence_info = ""
+                            step_info = (
+                                f"Step {step_idx + 1}/{len(repeat_seq.steps)} of sequence "
+                                f"{seq_idx + 1}/{len(config.repeat_sequences)}, "
+                                f"repeat {repeat_num + 1}/{repeat_seq.repeat}"
+                            )
+                            role_name = step.role
+                            on_iteration_start(
+                                iterations,
+                                sequence_info,
+                                step_info,
+                                role_name,
+                                prompt_preview,
+                            )
                         
                         # Always create a new session for each step
                         new_session_id = str(uuid.uuid4())
@@ -264,6 +308,17 @@ class Orchestrator:
                                 total_cost_usd=total_cost,
                                 outputs=outputs,
                             )
+                        except RalphExitRequested:
+                            return LoopResult(
+                                status=LoopStatus.RALPH_EXIT_REQUESTED,
+                                iterations=iterations,
+                                total_duration_ms=int((time.time() - start_time) * 1000),
+                                total_cost_usd=total_cost,
+                                outputs=outputs,
+                            )
+                        except RalphContinueRequested:
+                            # Skip current step, continue to next step in the loop
+                            continue
                         
                         # Collect output
                         outputs.append(result.output)

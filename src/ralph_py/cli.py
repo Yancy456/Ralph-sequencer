@@ -10,6 +10,7 @@ Usage:
 import argparse
 import asyncio
 import io
+import shutil
 import json
 import logging
 import os
@@ -55,9 +56,10 @@ from rich.panel import Panel
 import re
 
 from ralph_py.claude_backend import ClaudeBackend
+from ralph_py.config import RalphConfig, Role, RepeatSequence, SequenceStep
+from ralph_py.exceptions import RalphExitRequested, RalphContinueRequested
 from ralph_py.executor import ExecutionResult
 from ralph_py.orchestrator import Orchestrator, OrchestratorConfig, LoopStatus
-from ralph_py.config import RalphConfig
 
 console = Console()
 _logger = None  # Will be set in setup_logging
@@ -150,6 +152,70 @@ def set_run_id(run_id: str) -> None:
     _current_run_id = safe_id
 
 
+def save_config_snapshot(config_path: Path) -> Path:
+    """Save a copy of the current config file into the run directory."""
+    run_dir = get_run_dir()
+    snapshot_name = config_path.name
+    snapshot_path = run_dir / snapshot_name
+    try:
+        shutil.copy2(config_path, snapshot_path)
+    except Exception:
+        # Best-effort; don't fail the run if snapshot fails
+        _logger = logging.getLogger(__name__)
+        _logger.warning("Failed to save config snapshot to %s", snapshot_path)
+    return snapshot_path
+
+
+def save_iteration_state(
+    config_path: Path,
+    iteration: int,
+    step_info: str,
+    role: str,
+) -> None:
+    """Persist current iteration position for potential resume."""
+    run_dir = get_run_dir()
+    state_path = run_dir / "state.json"
+    state = {
+        "config_path": str(config_path),
+        "run_id": _current_run_id,
+        "iteration": iteration,
+        "step_info": step_info,
+        "role": role,
+        "timestamp": datetime.now().isoformat(),
+    }
+    try:
+        with state_path.open("w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception:
+        _logger = logging.getLogger(__name__)
+        _logger.warning("Failed to save iteration state to %s", state_path)
+
+
+def load_last_state() -> Optional[dict]:
+    """Load the most recent iteration state from the latest run directory."""
+    if not OUTPUT_DIR.exists():
+        return None
+    
+    run_dirs = [d for d in OUTPUT_DIR.iterdir() if d.is_dir()]
+    if not run_dirs:
+        return None
+    
+    # Sort by modification time, newest first
+    run_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    
+    for run_dir in run_dirs:
+        state_path = run_dir / "state.json"
+        if state_path.exists():
+            try:
+                with state_path.open("r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                _logger = logging.getLogger(__name__)
+                _logger.warning("Failed to read state file from %s", state_path)
+                continue
+    return None
+
+
 def setup_logging() -> None:
     """Set up logging with rich handler and file handler."""
     level = logging.INFO
@@ -233,7 +299,23 @@ def create_parser() -> argparse.ArgumentParser:
         const="ralph.yaml",
         help="Use configuration file to execute repeat sequences (default: ralph.yaml if flag provided)",
     )
-    
+    run_parser.add_argument(
+        "-p", "--prompt",
+        type=str,
+        help="Run a single iteration with an inline prompt using a default role (quick test mode)",
+    )
+    run_parser.add_argument(
+        "-r", "--resume",
+        action="store_true",
+        help="Resume from the last saved iteration state (if available)",
+    )
+
+    # Exit command
+    subparsers.add_parser("exit", help="Terminate ralph-py")
+
+    # Continue command (skip current step, continue loop when invoked via Bash during run)
+    subparsers.add_parser("continue", help="Skip current step and continue to next (when invoked during run)")
+
     return parser
 
 
@@ -241,14 +323,9 @@ async def run_sequences(
     ralph_config: RalphConfig,
     backend: ClaudeBackend,
     config: OrchestratorConfig,
+    config_path: Path,
 ) -> int:
     """Run sequences from configuration."""
-    log_print(Panel(
-        f"Executing {len(ralph_config.repeat_sequences)} sequence(s) from configuration",
-        title="[bold blue]Configuration Execution[/bold blue]",
-        border_style="blue",
-    ))
-    
     logger = logging.getLogger(__name__)
     
     orchestrator = Orchestrator(backend, config)
@@ -259,10 +336,13 @@ async def run_sequences(
         sequence_info: str,
         step_info: str,
         role: str,
+        prompt_preview: str,
     ) -> None:
         """Display iteration start information in a panel."""
         # Pre-compute NDJSON path (same as used when streaming starts)
         output_path = get_output_path(iteration)
+        # Save current iteration state for potential resume
+        save_iteration_state(config_path, iteration, step_info, role)
         # Highlight numeric progress parts in step_info with color and prepend label
         highlighted_step_info = re.sub(
             r"(\d+\/\d+|\d+)",
@@ -275,7 +355,8 @@ async def run_sequences(
             lines.append(sequence_info)
         lines.extend([
             highlighted_step_info,
-            f"Role: {role}",
+            f"Role: [yellow]{role}[/yellow]",
+            f"Prompt: {prompt_preview}" if prompt_preview else "Prompt: (empty)",
             f"Memory: New session created for step {iteration}",
             f"NDJSON streaming to: {output_path}",
         ])
@@ -317,8 +398,16 @@ async def run_sequences(
         if not cli_started:
             log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
             cli_started = True
+        
         detail = _get_tool_detail(name, inputs)
         log_print(f"[yellow]\\[{name}][/yellow]{detail}")
+        # If model invokes Bash with "ralph-py exit" or "ralph-py continue", signal loop/step exit
+        if name == "Bash":
+            cmd = (inputs.get("command") or "").strip()
+            if cmd.startswith("ralph-py exit"):
+                raise RalphExitRequested
+            if cmd.startswith("ralph-py continue"):
+                raise RalphContinueRequested
     
     # Track open file handles for real-time NDJSON output
     ndjson_files: dict[int, any] = {}
@@ -370,6 +459,8 @@ async def run_sequences(
         LoopStatus.TIMEOUT: "[red]⏱ Timeout[/red]",
         LoopStatus.INTERRUPTED: "[yellow]⚡ Interrupted[/yellow]",
         LoopStatus.ERROR: "[red]✗ Error[/red]",
+        LoopStatus.RALPH_EXIT_REQUESTED: "[green]✓ RalphExitRequested[/green]",
+        LoopStatus.RALPH_CONTINUE_REQUESTED: "[green]✓ RalphContinueRequested[/green]",
     }.get(loop_result.status, str(loop_result.status))
     
     duration_str = format_duration(loop_result.total_duration_ms)
@@ -379,7 +470,11 @@ async def run_sequences(
         f"Duration: {duration_str}\n"
         f"Total Cost: ${loop_result.total_cost_usd:.4f}",
         title="[bold]Sequence Execution Result[/bold]",
-        border_style="blue" if loop_result.status == LoopStatus.COMPLETED else "yellow",
+        border_style=(
+            "blue"
+            if loop_result.status == LoopStatus.COMPLETED
+            else "yellow"
+        ),
     ))
     
     if loop_result.error:
@@ -403,54 +498,102 @@ def main() -> int:
     setup_logging()
     
     try:
+        if args.command == "exit":
+            console.print("ralph-py has been terminated")
+            return 0
+        if args.command == "continue":
+            console.print("ralph-py continue (skips current step when invoked via Bash during run)")
+            return 0
         if args.command == "run":
-            # Check if using config file
-            # If --config is provided without value, use default "ralph.yaml"
-            config_file = args.config if args.config else None
-            if not config_file:
-                log_print("[red]Error: --config is required. Use --config or --config <path>[/red]")
-                return 0
-            
-            # Load configuration
-            try:
-                config_path = Path(config_file)
-                if not config_path.is_absolute():
-                    if args.directory:
-                        config_path = Path(args.directory) / config_path
-                    else:
-                        config_path = Path.cwd() / config_path
-                ralph_config = RalphConfig.load(config_path)
-            except FileNotFoundError as e:
-                log_print(f"[red]Error: {e}[/red]")
-                return 0
-            except Exception as e:
-                log_print(f"[red]Error loading configuration: {e}[/red]")
-                log_print_exception()
-                return 0
-            
-            if not ralph_config.repeat_sequences:
-                log_print("[yellow]Warning: No repeat_sequences found in configuration file[/yellow]")
-                return 0
-            
-            log_print(Panel(
-                f"Loaded {len(ralph_config.repeat_sequences)} sequence(s) from configuration",
-                title="[bold blue]Configuration Loaded[/bold blue]",
-                border_style="blue",
-            ))
+            # Quick prompt mode: run a single iteration with an inline prompt
+            if args.prompt:
+                if args.config:
+                    log_print("[yellow]Warning: --prompt provided; ignoring --config and using inline prompt only[/yellow]")
+                
+                # Build an in-memory config with a single default role and one sequence
+                default_role = Role(name="default")
+                step = SequenceStep(role="default", prompt=args.prompt, new_session=True)
+                repeat_seq = RepeatSequence(steps=[step], repeat=1)
+                ralph_config = RalphConfig(
+                    roles={"default": default_role},
+                    repeat_sequences=[repeat_seq],
+                )
+                
+                # Use a synthetic config path for state tracking
+                config_path = Path("INLINE_PROMPT")
+                
+                log_print(Panel(
+                    "Running single iteration with inline prompt",
+                    title="[bold blue]Quick Prompt Run[/bold blue]",
+                    border_style="blue",
+                ))
+            else:
+                # Check if using config file
+                # If --config is provided without value, use default "ralph.yaml"
+                config_file = args.config if args.config else None
+                if not config_file:
+                    log_print("[red]Error: --config is required. Use --config or --config <path>[/red]")
+                    return 0
+                
+                # Load configuration
+                try:
+                    config_path = Path(config_file)
+                    if not config_path.is_absolute():
+                        if args.directory:
+                            config_path = Path(args.directory) / config_path
+                        else:
+                            config_path = Path.cwd() / config_path
+                    ralph_config = RalphConfig.load(config_path)
+                except FileNotFoundError as e:
+                    log_print(f"[red]Error: {e}[/red]")
+                    return 0
+                except Exception as e:
+                    log_print(f"[red]Error loading configuration: {e}[/red]")
+                    log_print_exception()
+                    return 0
+                
+                if not ralph_config.repeat_sequences:
+                    log_print("[yellow]Warning: No repeat_sequences found in configuration file[/yellow]")
+                    return 0
+                
+                # Save a snapshot of the configuration for this run
+                snapshot_path = save_config_snapshot(config_path)
+                
+                log_print(Panel(
+                    f"Loaded {len(ralph_config.repeat_sequences)} sequence(s) from configuration",
+                    title="[bold blue]Configuration Loaded[/bold blue]",
+                    border_style="blue",
+                ))
             
             # Create backend
             backend = ClaudeBackend.default()
             backend.args.extend(["--session-id", run_id])
+            
+            # Determine resume point if requested
+            resume_from_iteration = 0
+            if args.resume and not args.prompt:
+                state = load_last_state()
+                if state:
+                    state_config = Path(state.get("config_path", ""))
+                    state_iter = state.get("iteration", 0)
+                    if state_config == config_path and isinstance(state_iter, int) and state_iter > 0:
+                        resume_from_iteration = max(0, state_iter - 1)
+                        log_print(f"[yellow]Resuming from iteration {state_iter} using state in {state_config}[/yellow]")
+                    else:
+                        log_print("[yellow]No compatible state found to resume from; starting from beginning.[/yellow]")
+                else:
+                    log_print("[yellow]No previous state found; starting from beginning.[/yellow]")
             
             # Orchestrator config
             orchestrator_config = OrchestratorConfig(
                 max_iterations=args.max_iterations,
                 iteration_timeout_secs=args.timeout,
                 working_directory=args.directory,
+                resume_from_iteration=resume_from_iteration,
             )
             
             # Run sequences
-            return asyncio.run(run_sequences(ralph_config, backend, orchestrator_config))
+            return asyncio.run(run_sequences(ralph_config, backend, orchestrator_config, config_path))
         
         else:
             parser.print_help()
