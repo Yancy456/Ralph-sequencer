@@ -91,6 +91,25 @@ def _get_tool_detail(name: str, inputs: dict) -> str:
             else:
                 detail += f" {clean_prompt}"
         return detail
+    elif name == "TodoWrite" and "todos" in inputs:
+        todos = inputs["todos"]
+        if not todos:
+            return ""
+        # 1. Look for in_progress
+        in_progress_todos = [t for t in todos if t.get("status") == "in_progress"]
+        if in_progress_todos:
+            # Output in_progress content
+            content = in_progress_todos[0].get("content") or in_progress_todos[0].get("activeForm") or ""
+            return f" {content}"
+        # 2. No in_progress, output first three in one line
+        top_three = []
+        for t in todos[:3]:
+            c = t.get("content") or t.get("activeForm") or ""
+            if c:
+                top_three.append(c)
+        if top_three:
+            return f" {' | '.join(top_three)}"
+        return ""
     return ""
 
 
@@ -258,8 +277,7 @@ async def run_sequences(
             highlighted_step_info,
             f"Role: [yellow]{role}[/yellow]",
             f"Prompt: {prompt_preview}" if prompt_preview else "Prompt: (empty)",
-            f"Memory: New session created for step {iteration}",
-            f"NDJSON streaming to: {output_path}",
+            f"Memory: [red]✗Disable[/red]"
         ])
         content = "\n".join(lines)
         log_print(Panel(
@@ -493,6 +511,7 @@ def main() -> int:
                 working_directory=args.directory,
                 resume_from_iteration=resume_from_iteration,
                 session_id=run_id,
+                disallowed_tools["AskUserQuestion"],
             )
             
             # Run sequences

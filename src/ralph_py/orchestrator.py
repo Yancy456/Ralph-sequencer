@@ -51,6 +51,7 @@ class OrchestratorConfig:
     reset_session_iter: int = 5  # Reset session every N iterations (0 = never reset)
     resume_from_iteration: int = 0  # Number of iterations to skip (0 = no resume)
     session_id: Optional[str] = None  # Session ID for the run
+    disallowed_tools: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -269,6 +270,7 @@ class Orchestrator:
                             working_directory=self.config.working_directory,
                             resume=None,  # New session, don't resume
                             session_id=new_session_id,
+                            disallowed_tools=self.config.disallowed_tools or ["AskUserQuestion"],
                         )
                         
                         # Create executor for this step
@@ -322,6 +324,7 @@ class Orchestrator:
                                     working_directory=self.config.working_directory,
                                     resume=True,  # Resume the session
                                     session_id=new_session_id,
+                                    disallowed_tools=self.config.disallowed_tools or ["AskUserQuestion"],
                                 )
                                 
                                 # Create a new executor for the next interaction in the same session

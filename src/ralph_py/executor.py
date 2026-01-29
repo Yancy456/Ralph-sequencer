@@ -68,6 +68,7 @@ class ExecutorConfig:
     idle_timeout_secs: int = 300  # 5 minutes default
     working_directory: Optional[str] = None  # Working directory for command
     interactive: bool = False  # Whether to allow interactive input
+    disallowed_tools: list[str] = field(default_factory=lambda: ["AskUserQuestion"])
 
 
 # Type alias for event callbacks
@@ -129,6 +130,10 @@ class ClaudeExecutor:
         # Add prompt flag and prompt
         args.append("-p")
         args.append(prompt)
+
+        if self.config.disallowed_tools:
+            args.append("--disallowed-tools")
+            args.append(",".join(self.config.disallowed_tools))
         
         return [self.config.command] + args, None, None
     
