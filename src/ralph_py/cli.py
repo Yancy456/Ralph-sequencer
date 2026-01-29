@@ -52,6 +52,12 @@ from ralph_py.config import RalphConfig, Role, RepeatSequence, SequenceStep
 from ralph_py.exceptions import RalphExitRequested, RalphContinueRequested
 from ralph_py.executor import ExecutionResult
 from ralph_py.orchestrator import Orchestrator, OrchestratorConfig, LoopStatus
+from ralph_py.stream_parser import (
+    ClaudeStreamParser,
+    AssistantEvent,
+    TextContent,
+    ToolUseContent,
+)
 from ralph_py.logging_system import (
     console,
     log_print,
@@ -73,6 +79,18 @@ def _get_tool_detail(name: str, inputs: dict) -> str:
         return f" {inputs['pattern']}"
     elif name == "Grep" and "pattern" in inputs:
         return f" {inputs['pattern']}"
+    elif name == "Task":
+        subagent_type = inputs.get("subagent_type", "")
+        prompt = inputs.get("prompt", "")
+        detail = f" [{subagent_type}]"
+        if prompt:
+            # Clean up prompt for display: join lines and truncate
+            clean_prompt = " ".join(prompt.splitlines()).strip()
+            if len(clean_prompt) > 80:
+                detail += f" {clean_prompt[:80]}..."
+            else:
+                detail += f" {clean_prompt}"
+        return detail
     return ""
 
 
@@ -264,38 +282,59 @@ async def run_sequences(
             border_style="blue",
         ))
     
-    def on_text(text: str) -> None:
-        log_print(f"[cyan]\\[msg][/cyan] {text}")
-    
-    def on_tool_call(name: str, tool_id: str, inputs: dict) -> None:
-        detail = _get_tool_detail(name, inputs)
-        log_print(f"[yellow]\\[{name}][/yellow]{detail}")
-        # If model invokes Bash with "ralph-py exit" or "ralph-py continue", signal loop/step exit
-        if name == "Bash":
-            cmd = (inputs.get("command") or "").strip()
-            if cmd.startswith("ralph-py exit"):
-                raise RalphExitRequested
-            if cmd.startswith("ralph-py continue"):
-                raise RalphContinueRequested
-    
     # Track open file handles for real-time NDJSON output
     ndjson_files: dict[int, any] = {}
     
     def on_raw_line(iteration: int, line: str) -> None:
-        """Write formatted NDJSON line to file in real-time."""
+        """Process raw NDJSON line for file logging and real-time display."""
         if iteration not in ndjson_files:
             output_path = get_output_path(iteration)
             ndjson_files[iteration] = open(output_path, 'w', encoding='utf-8')
-        # Format JSON for readability
+        
         line = line.strip()
-        if line:
-            try:
-                obj = json.loads(line)
-                formatted = json.dumps(obj, indent=2, ensure_ascii=False)
-                ndjson_files[iteration].write(formatted + '\n\n')
-            except json.JSONDecodeError:
-                ndjson_files[iteration].write(line + '\n')
-            ndjson_files[iteration].flush()  # Ensure immediate write
+        if not line:
+            return
+
+        # 1. Write to debug file
+        try:
+            obj = json.loads(line)
+            formatted = json.dumps(obj, indent=2, ensure_ascii=False)
+            ndjson_files[iteration].write(formatted + '\n\n')
+        except json.JSONDecodeError:
+            ndjson_files[iteration].write(line + '\n')
+        ndjson_files[iteration].flush()
+
+        # 2. Parse and display content/tool calls
+        event = ClaudeStreamParser.parse_line(line)
+        if event:
+            # Handle subagent display
+            agent_prefix = ""
+            if getattr(event, "parent_tool_use_id", None):
+                parent_id = event.parent_tool_use_id
+                short_id = parent_id
+                if parent_id.startswith("call_"):
+                    short_id = parent_id[5:9]
+                elif len(parent_id) > 4:
+                    short_id = parent_id[:4]
+                agent_prefix = f"[magenta]\\[agent {short_id}][/magenta] "
+
+            if isinstance(event, AssistantEvent):
+                for block in event.message.content:
+                    if isinstance(block, TextContent):
+                        log_print(f"{agent_prefix}[cyan]\\[msg][/cyan] {block.text}")
+                    elif isinstance(block, ToolUseContent):
+                        detail = _get_tool_detail(block.name, block.input)
+                        log_print(f"{agent_prefix}[yellow]\\[{block.name}][/yellow]{detail}")
+                        if block.name == "Bash":
+                            cmd = (block.input.get("command") or "").strip()
+                            if cmd.startswith("ralph-py exit"):
+                                raise RalphExitRequested
+                            if cmd.startswith("ralph-py continue"):
+                                raise RalphContinueRequested
+        else:
+            # For non-JSON output (plain text mode), treat as message
+            if not line.startswith('{'):
+                log_print(f"[cyan]\\[msg][/cyan] {line}")
     
     def on_save_output(iteration: int, output: str) -> None:
         """Close file handle after iteration."""
@@ -306,8 +345,6 @@ async def run_sequences(
     loop_result = await orchestrator.run_sequences(
         ralph_config,
         on_iteration=on_iteration,
-        on_text=on_text,
-        on_tool_call=on_tool_call,
         on_save_output=on_save_output,
         on_raw_line=on_raw_line,
         on_iteration_start=on_iteration_start,

@@ -68,8 +68,6 @@ class LoopResult:
 IterationCallback = Callable[[int, ExecutionResult], None]
 # iteration, sequence_info, step_info, role, prompt_preview
 IterationStartCallback = Callable[[int, str, str, str, str], None]
-TextCallback = Callable[[str], None]
-ToolCallback = Callable[[str, str, dict], None]
 SaveOutputCallback = Callable[[int, str], None]  # Callback to save output (iteration, output)
 RawLineCallback = Callable[[int, str], None]  # Callback for raw NDJSON lines (iteration, line)
 
@@ -108,8 +106,6 @@ class Orchestrator:
         self,
         config: RalphConfig,
         on_iteration: Optional[IterationCallback] = None,
-            on_text: Optional[TextCallback] = None,
-            on_tool_call: Optional[ToolCallback] = None,
             on_save_output: Optional[SaveOutputCallback] = None,
             on_raw_line: Optional[RawLineCallback] = None,
             on_iteration_start: Optional[IterationStartCallback] = None,
@@ -120,8 +116,6 @@ class Orchestrator:
         Args:
             config: RalphConfig with repeat_sequences
             on_iteration: Callback after each iteration
-            on_text: Callback for streaming text
-            on_tool_call: Callback for tool invocations
             on_save_output: Callback to save output (iteration, output)
             on_raw_line: Callback for raw NDJSON lines (real-time output)
             
@@ -299,8 +293,6 @@ class Orchestrator:
                                 log_print("[bold green]Processing...[/bold green]")
                                 result = await self._executor.run(
                                     current_prompt,
-                                    on_text=on_text,
-                                    on_tool_call=on_tool_call,
                                     on_raw_line=make_raw_line_callback(iterations),
                                 )
                                 # Use step-level interactive config, fallback to global config

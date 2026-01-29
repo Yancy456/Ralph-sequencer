@@ -72,8 +72,6 @@ class ExecutorConfig:
 
 # Type alias for event callbacks
 EventCallback = Callable[[ClaudeStreamEvent], None]
-TextCallback = Callable[[str], None]
-ToolCallback = Callable[[str, str, dict[str, Any]], None]
 RawLineCallback = Callable[[str], None]  # Callback for raw NDJSON lines
 
 
@@ -137,8 +135,6 @@ class ClaudeExecutor:
     async def run(
         self,
         prompt: str,
-        on_text: Optional[TextCallback] = None,
-        on_tool_call: Optional[ToolCallback] = None,
         on_event: Optional[EventCallback] = None,
         on_raw_line: Optional[RawLineCallback] = None,
     ) -> ExecutionResult:
@@ -147,8 +143,6 @@ class ClaudeExecutor:
         
         Args:
             prompt: The prompt to execute
-            on_text: Callback for text content
-            on_tool_call: Callback for tool invocations (name, id, input)
             on_event: Callback for raw stream events
             on_raw_line: Callback for raw NDJSON lines (for real-time output)
             
@@ -201,17 +195,8 @@ class ClaudeExecutor:
                                 for block in event.message.content:
                                     if isinstance(block, TextContent):
                                         extracted_text.append(block.text)
-                                        if on_text:
-                                            on_text(block.text)
                                     elif isinstance(block, ToolUseContent):
-                                        if on_tool_call:
-                                            try:
-                                                on_tool_call(block.name, block.id, block.input)
-                                            except (RalphExitRequested, RalphContinueRequested):
-                                                if self._process:
-                                                    self._process.terminate()
-                                                    await self._process.wait()
-                                                raise
+                                        pass
                             
                             elif isinstance(event, ResultEvent):
                                 session_result = SessionResult(
@@ -222,8 +207,7 @@ class ClaudeExecutor:
                                 )
                     else:
                         # Plain text output
-                        if on_text:
-                            on_text(line)
+                        pass
             
             # Wait for process to complete
             exit_code = await self._process.wait()

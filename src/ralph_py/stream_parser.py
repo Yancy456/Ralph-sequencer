@@ -79,6 +79,7 @@ class SystemEvent:
     session_id: str = ""
     model: str = ""
     tools: list[Any] = field(default_factory=list)
+    parent_tool_use_id: Optional[str] = None
 
 
 @dataclass
@@ -87,6 +88,7 @@ class AssistantEvent:
     type: str = "assistant"
     message: AssistantMessage = field(default_factory=AssistantMessage)
     usage: Optional[Usage] = None
+    parent_tool_use_id: Optional[str] = None
 
 
 @dataclass
@@ -94,6 +96,7 @@ class UserEvent:
     """Tool results returned to Claude."""
     type: str = "user"
     message: UserMessage = field(default_factory=UserMessage)
+    parent_tool_use_id: Optional[str] = None
 
 
 @dataclass
@@ -104,6 +107,7 @@ class ResultEvent:
     total_cost_usd: float = 0.0
     num_turns: int = 0
     is_error: bool = False
+    parent_tool_use_id: Optional[str] = None
 
 
 ClaudeStreamEvent = Union[SystemEvent, AssistantEvent, UserEvent, ResultEvent]
@@ -130,6 +134,7 @@ class ClaudeStreamParser:
             return None
         
         event_type = data.get("type")
+        parent_tool_use_id = data.get("parent_tool_use_id")
         
         if event_type == "system":
             return SystemEvent(
@@ -137,6 +142,7 @@ class ClaudeStreamParser:
                 session_id=data.get("session_id", ""),
                 model=data.get("model", ""),
                 tools=data.get("tools", []),
+                parent_tool_use_id=parent_tool_use_id,
             )
         
         elif event_type == "assistant":
@@ -170,6 +176,7 @@ class ClaudeStreamParser:
                 type="assistant",
                 message=AssistantMessage(content=content_blocks),
                 usage=usage,
+                parent_tool_use_id=parent_tool_use_id,
             )
         
         elif event_type == "user":
@@ -187,6 +194,7 @@ class ClaudeStreamParser:
             return UserEvent(
                 type="user",
                 message=UserMessage(content=content_blocks),
+                parent_tool_use_id=parent_tool_use_id,
             )
         
         elif event_type == "result":
@@ -196,6 +204,7 @@ class ClaudeStreamParser:
                 total_cost_usd=data.get("total_cost_usd", 0.0),
                 num_turns=data.get("num_turns", 0),
                 is_error=data.get("is_error", False),
+                parent_tool_use_id=parent_tool_use_id,
             )
         
         # Unknown event type
