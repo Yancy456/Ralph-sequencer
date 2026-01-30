@@ -2,6 +2,6 @@ description: a template to guide user to analyze the disk space usage.
 
 repeat_sequence:
     - sequence: 
-        - role: guider
+        - role: analyzer
           prompt_file: prompts/analyse_disk.md
           interactive: true

@@ -16,6 +16,7 @@ from typing import Callable, Optional
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.styles import Style
+from prompt_toolkit.key_binding import KeyBindings
 
 from config import RalphConfig, RepeatSequence, SequenceStep
 from exceptions import RalphExitRequested, RalphContinueRequested
@@ -305,7 +306,12 @@ class Orchestrator:
                                 
                                 try:
                                     log_print(f"[yellow]{_('cli.chat_mode_hint')}[/yellow]")
-                                    session = PromptSession(style=_chat_prompt_style)
+                                    kb = KeyBindings()
+                                    @kb.add('c-m')
+                                    def _on_submit(event):
+                                        event.current_buffer.validate_and_handle()
+                                    
+                                    session = PromptSession(style=_chat_prompt_style, key_bindings=kb)
                                     user_input = (await session.prompt_async(
                                         [('class:prompt', '>>> ')],
                                         multiline=True,

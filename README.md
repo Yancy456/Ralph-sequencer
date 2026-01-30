@@ -2,10 +2,9 @@
 
 [English](./README.md) | [简体中文](./README_ZH.md)
 
-Ralph-sequencer is an advanced agent orchestrator for Claude Code CLI.
+![Ralph-sequencer Preview](./preview.png)
 
 Read the self-introduction of Ralph-sequencer to understand what it is:
-
 
 I am Ralph-sequencer 😊, an agent orchestrator. I organize multiple agents to complete complex tasks like a symphony conductor 🎼. What I can do ✅:
 
@@ -16,7 +15,7 @@ I am Ralph-sequencer 😊, an agent orchestrator. I organize multiple agents to 
 
 What I cannot do ☹️:
 1. ✖️ I am not an AGI (Artificial General Intelligence). I cannot do everything based on just one sentence (I also don't have to🤭), but I can complete specified tasks based on templates.
-2. ✖️ I cannot make decisions for you. Although I can guide you through the decision-making process, AI must be aligned with humans; otherwise, it is dangerous and unreliable.
+2. ✖️ I cannot make decisions for you. Although I can guide you through the decision-making process, I must be aligned with humans; otherwise, I may be unreliable.
 3. ✖️ Although I am smart enough to help you with most of the work, I still need your review of the results to provide suggestions and continuously improve my output quality.
 
 Feeling too much pressure? Don't worry!! 🧘‍♂️ Talk to me, and I will guide you through the agent orchestration.
@@ -36,7 +35,7 @@ git clone https://github.com/Yancy456/Ralph-sequencer.git
 python install.py
 ```
 
-## Chat with Ralph-sequencer guider to get started !
+## Chat with Ralph-sequencer to get started !
 ```bash
 mkdir guider_demo # enter an empty folder
 cd guider_demo
