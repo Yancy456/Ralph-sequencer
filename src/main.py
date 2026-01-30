@@ -4,19 +4,19 @@ import uuid
 import subprocess
 from pathlib import Path
 
-from ralph_sq.args.command_line import create_parser
-from ralph_sq.config import RalphConfig, Role, RepeatSequence, SequenceStep
-from ralph_sq.i18n import _, i18n
-from ralph_sq.logging_system import (
+from args.command_line import create_parser
+from config import RalphConfig, Role, RepeatSequence, SequenceStep
+from i18n import _, i18n
+from logging_system import (
     console,
     log_print,
     log_print_exception,
     setup_logging,
     set_run_id,
 )
-from ralph_sq.orchestrator import OrchestratorConfig
-from ralph_sq.settings.persistence import get_setting, set_setting
-from ralph_sq.cli import run_sequences, save_config_snapshot, load_last_state
+from orchestrator import OrchestratorConfig
+from settings.persistence import get_setting, set_setting
+from cli import run_sequences, save_config_snapshot, load_last_state
 
 from rich.panel import Panel
 from rich.prompt import Confirm
@@ -59,7 +59,7 @@ def main() -> int:
                     lang = get_setting("language", "en")
                     console.print(_("cli.current_setting", key="language", value=lang))
             elif args.config_item == "show":
-                from ralph_sq.settings.persistence import SETTINGS_FILE
+                from settings.persistence import SETTINGS_FILE
                 config_path = SETTINGS_FILE
                 if config_path.exists():
                     from rich.syntax import Syntax
@@ -82,10 +82,10 @@ def main() -> int:
             template_name = args.name
             
             # Find templates directory
-            # Try 1: Next to ralph_sq package (dev mode)
-            # Try 2: Inside ralph_sq package (if we decide to move it later)
+            # Try 1: Next to package (dev mode)
+            # Try 2: Inside package (if we decide to move it later)
             possible_paths = [
-                Path(__file__).parent.parent.parent / "templates" / template_name,
+                Path(__file__).parent.parent / "templates" / template_name,
                 Path(__file__).parent / "templates" / template_name,
             ]
             
@@ -167,7 +167,7 @@ def main() -> int:
                 return 1
             
             # Get the project root (where .git should be)
-            project_root = Path(__file__).parent.parent.parent
+            project_root = Path(__file__).parent.parent
             if not (project_root / ".git").exists():
                 console.print(f"[red]{_('cli.not_a_git_repo')}[/red]")
                 return 1

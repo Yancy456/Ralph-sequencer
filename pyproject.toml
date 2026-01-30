@@ -39,10 +39,10 @@ dev = [
 ]
 
 [project.scripts]
-ralph-sq = "ralph_sq.main:main"
+ralph-sq = "main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ralph_sq"]
+packages = ["src"]
 
 [tool.ruff]
 line-length = 100

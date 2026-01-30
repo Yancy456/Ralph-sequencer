@@ -17,11 +17,11 @@ from typing import Callable, Optional
 from prompt_toolkit import PromptSession
 from prompt_toolkit.styles import Style
 
-from ralph_sq.config import RalphConfig, RepeatSequence, SequenceStep
-from ralph_sq.exceptions import RalphExitRequested, RalphContinueRequested
-from ralph_sq.executor import ClaudeExecutor, ExecutorConfig, ExecutionResult
-from ralph_sq.logging_system import log_print
-from ralph_sq.i18n import _
+from config import RalphConfig, RepeatSequence, SequenceStep
+from exceptions import RalphExitRequested, RalphContinueRequested
+from executor import ClaudeExecutor, ExecutorConfig, ExecutionResult
+from logging_system import log_print
+from i18n import _
 # Style for the chat prompt
 _chat_prompt_style = Style.from_dict({
     'prompt': '#ffcc00',  # Yellow color

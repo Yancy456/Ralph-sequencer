@@ -16,18 +16,18 @@ from typing import Optional
 
 from rich.panel import Panel
 
-from ralph_sq.config import RalphConfig
-from ralph_sq.i18n import _, i18n
-from ralph_sq.exceptions import RalphExitRequested, RalphContinueRequested
-from ralph_sq.executor import ExecutionResult
-from ralph_sq.orchestrator import Orchestrator, OrchestratorConfig, LoopStatus
-from ralph_sq.stream_parser import (
+from config import RalphConfig
+from i18n import _, i18n
+from exceptions import RalphExitRequested, RalphContinueRequested
+from executor import ExecutionResult
+from orchestrator import Orchestrator, OrchestratorConfig, LoopStatus
+from stream_parser import (
     ClaudeStreamParser,
     AssistantEvent,
     TextContent,
     ToolUseContent,
 )
-from ralph_sq.logging_system import (
+from logging_system import (
     log_print,
     get_run_id,
     get_run_dir,

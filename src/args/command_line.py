@@ -1,8 +1,8 @@
 import argparse
 
 
-from ralph_sq.settings.persistence import get_setting
-from ralph_sq.i18n import _
+from settings.persistence import get_setting
+from i18n import _
 
 
 def create_parser() -> argparse.ArgumentParser:

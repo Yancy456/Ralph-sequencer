@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import AsyncIterator, Callable, Optional, Any
 
-from ralph_sq.exceptions import RalphExitRequested, RalphContinueRequested
-from ralph_sq.stream_parser import (
+from exceptions import RalphExitRequested, RalphContinueRequested
+from stream_parser import (
     ClaudeStreamParser,
     AssistantEvent,
     ResultEvent,
