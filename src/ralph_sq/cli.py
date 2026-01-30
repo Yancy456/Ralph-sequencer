@@ -315,7 +315,7 @@ async def run_sequences(
     ndjson_files.clear()
     # End CLI section if still open
     if cli_started:
-        log_print("[bold magenta]<<< claude CLI end <<<[/bold magenta]\n")
+        log_print(f"[bold magenta]{_('cli.claude_end')}[/bold magenta]\n")
     
     # Print final summary
     status_emoji = {

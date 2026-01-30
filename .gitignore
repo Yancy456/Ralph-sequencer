@@ -1,2 +1,3 @@
 .ralph_debug/*
 *.pyc
+*.log

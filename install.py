@@ -99,6 +99,7 @@ def install_package(dev: bool = False, user: bool = False) -> bool:
         
         if result.returncode == 0:
             print("\n✅ Installation successful!")
+            print(f"\n💡 To uninstall later, run: python uninstall.py")
             
             # Check if the command is available
             check_command_available()

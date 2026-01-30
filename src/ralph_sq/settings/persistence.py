@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict
 
-SETTINGS_FILE = Path.home() / ".ralph-sq-settings.yaml"
+SETTINGS_FILE = Path(__file__).parent / "settings.yaml"
 
 def load_settings() -> Dict[str, Any]:
     """Load settings from the persistent storage."""

@@ -1,0 +1,7 @@
+description: a guider for the user to understand how to use ralph-sq
+
+repeat_sequence:
+    - sequence: 
+        - role: guider
+          prompt_file: prompts/guider.md
+          interactive: true

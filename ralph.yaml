@@ -1,8 +1,0 @@
-
-repeat_sequence:
-    - sequence: 
-        - role: writer
-          prompt: 你好
-          interactive: true
-        
-

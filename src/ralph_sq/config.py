@@ -40,7 +40,7 @@ class RalphConfig:
     roles: dict[str, Role] = field(default_factory=dict)
     repeat_sequences: list[RepeatSequence] = field(default_factory=list)
     interactive: bool = False
-    language: str = "en"
+    language: Optional[str] = None
     
     @classmethod
     def load(cls, config_path: str | Path) -> "RalphConfig":
@@ -69,7 +69,7 @@ class RalphConfig:
         
         # Parse global options
         interactive = data.get("interactive", False)
-        language = data.get("language", "en")
+        language = data.get("language")
         
         # Parse roles
         roles = {}
@@ -79,6 +79,20 @@ class RalphConfig:
                     role_name = role_data["role"]
                     prompt_file = role_data.get("prompt_file")
                     roles[role_name] = Role(name=role_name, prompt_file=prompt_file)
+        
+        # Backward compatibility: if roles are not defined in 'roles' section,
+        # collect them from repeat_sequences
+        if "repeat_sequence" in data and isinstance(data["repeat_sequence"], list):
+            for seq_data in data["repeat_sequence"]:
+                if isinstance(seq_data, dict) and "sequence" in seq_data:
+                    sequence_list = seq_data["sequence"]
+                    if isinstance(sequence_list, list):
+                        for step_data in sequence_list:
+                            if isinstance(step_data, dict) and "role" in step_data:
+                                role_name = step_data["role"]
+                                if role_name not in roles:
+                                    prompt_file = step_data.get("prompt_file")
+                                    roles[role_name] = Role(name=role_name, prompt_file=prompt_file)
         
         # Parse repeat_sequences
         repeat_sequences = []

@@ -46,18 +46,18 @@ class I18nManager:
             # Fallback to English if language not found
             self.current_language = "en"
 
-    def translate(self, key: str, **kwargs) -> str:
+    def translate(self, key_path: str, **kwargs) -> str:
         """
         Translate a key to the current language.
         
         Args:
-            key: The translation key (e.g., "cli.error_loading_config")
+            key_path: The translation key (e.g., "cli.error_loading_config")
             **kwargs: Values for placeholder substitution
             
         Returns:
             Translated string or the key itself if not found
         """
-        keys = key.split(".")
+        keys = key_path.split(".")
         val = self.translations.get(self.current_language, {})
         
         for k in keys:
@@ -70,7 +70,7 @@ class I18nManager:
                     if isinstance(val, dict) and k2 in val:
                         val = val[k2]
                     else:
-                        return key
+                        return key_path
                 break
         
         if isinstance(val, str):
@@ -78,11 +78,11 @@ class I18nManager:
                 return val.format(**kwargs)
             except KeyError:
                 return val
-        return key
+        return key_path
 
 # Global instance
 i18n = I18nManager()
 
-def _(key: str, **kwargs) -> str:
+def _(key_path: str, **kwargs) -> str:
     """Alias for i18n.translate."""
-    return i18n.translate(key, **kwargs)
+    return i18n.translate(key_path, **kwargs)

@@ -22,9 +22,14 @@ from rich.panel import Panel
 
 def main() -> int:
     """Main entry point."""
+    # 1. Initialize language from persistent settings as early as possible
+    initial_lang = get_setting("language", "en")
+    i18n.set_language(initial_lang)
+
     parser = create_parser()
     args = parser.parse_args()
     
+
     if not args.command:
         parser.print_help()
         return 0
@@ -42,22 +47,109 @@ def main() -> int:
             console.print(_("cli.continue_skip"))
             return 0
         if args.command == "config":
-            if args.lang:
-                set_setting("language", args.lang)
-                i18n.set_language(args.lang)
-                console.print(_("cli.setting_updated", key="language", value=args.lang))
+            if args.config_item == "lang":
+                if args.value:
+                    lang_value = "zh" if args.value == "cn" else args.value
+                    set_setting("language", lang_value)
+                    i18n.set_language(lang_value)
+                    console.print(_("cli.setting_updated", key="language", value=lang_value))
+                else:
+                    lang = get_setting("language", "en")
+                    console.print(_("cli.current_setting", key="language", value=lang))
+            elif args.config_item == "show":
+                from ralph_sq.settings.persistence import SETTINGS_FILE
+                config_path = SETTINGS_FILE
+                if config_path.exists():
+                    from rich.syntax import Syntax
+                    console.print(_("cli.config_path", path=str(config_path)))
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        syntax = Syntax(content, "yaml", theme="monokai", line_numbers=True)
+                        console.print(syntax)
+                else:
+                    console.print(_("cli.config_not_found", path=str(config_path)))
             else:
-                lang = get_setting("language", "en")
-                console.print(_("cli.current_setting", key="language", value=lang))
+                parser.print_help()
             return 0
-        if args.command == "run":
-            # Set language priority: CLI > Persistent Settings > Default "en"
-            current_lang = args.lang or get_setting("language", "en")
-            i18n.set_language(current_lang)
+        if args.command == "template":
+            import yaml
+            import shutil
+            import glob
             
-            # If explicitly provided via CLI, persist it
+            template_name = args.name
+            
+            # Find templates directory
+            # Try 1: Next to ralph_sq package (dev mode)
+            # Try 2: Inside ralph_sq package (if we decide to move it later)
+            possible_paths = [
+                Path(__file__).parent.parent.parent / "templates" / template_name,
+                Path(__file__).parent / "templates" / template_name,
+            ]
+            
+            template_path = None
+            for p in possible_paths:
+                if p.exists() and p.is_dir():
+                    template_path = p
+                    break
+            
+            if not template_path:
+                console.print(_("cli.template_not_found", name=template_name, path=str(possible_paths[0])))
+                return 1
+            
+            install_yaml_path = template_path / "install.yaml"
+            if not install_yaml_path.exists():
+                console.print(_("cli.error", error=f"install.yaml not found in {template_path}"))
+                return 1
+            
+            console.print(_("cli.template_installing", name=template_name))
+            
+            try:
+                with open(install_yaml_path, "r", encoding="utf-8") as f:
+                    install_config = yaml.safe_load(f)
+                
+                copy_files = install_config.get("copy_files", [])
+                for pattern in copy_files:
+                    # Resolve glob patterns relative to template_path
+                    files_to_copy = []
+                    if "*" in pattern:
+                        search_pattern = str(template_path / pattern)
+                        files_to_copy = glob.glob(search_pattern, recursive=True)
+                    else:
+                        file_path = template_path / pattern
+                        if file_path.exists():
+                            files_to_copy = [str(file_path)]
+                    
+                    for src_path_str in files_to_copy:
+                        src_path = Path(src_path_str)
+                        if src_path == install_yaml_path:
+                            continue
+                            
+                        # Calculate relative path to maintain directory structure
+                        rel_path = src_path.relative_to(template_path)
+                        dest_path = Path.cwd() / rel_path
+                        
+                        # Create parent directories if they don't exist
+                        dest_path.parent.mkdir(parents=True, exist_ok=True)
+                        
+                        if src_path.is_dir():
+                            # If it's a directory, we skip it here as glob might return it, 
+                            # and we'll handle files inside it via other patterns or recursive glob
+                            continue
+                        
+                        console.print(_("cli.template_copying", src=str(rel_path), dest=str(dest_path.relative_to(Path.cwd()))))
+                        shutil.copy2(src_path, dest_path)
+                
+                console.print(_("cli.template_installed", name=template_name))
+                console.print(f"[blue]{_('cli.template_run_hint')}[/blue]")
+                return 0
+            except Exception as e:
+                console.print(_("cli.template_error", error=str(e)))
+                return 1
+
+        if args.command == "run":
+            # Set language from CLI if specified
             if args.lang:
-                set_setting("language", args.lang)
+                i18n.set_language(args.lang)
 
             # Quick prompt mode: run a single iteration with an inline prompt
             if args.prompt:
@@ -83,11 +175,7 @@ def main() -> int:
                 ))
             else:
                 # Check if using config file
-                # If --config is provided without value, use default "ralph.yaml"
-                config_file = args.config if args.config else None
-                if not config_file:
-                    log_print(f"[red]{_('cli.error_config_required')}[/red]")
-                    return 0
+                config_file = args.config
                 
                 # Load configuration
                 try:

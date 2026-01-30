@@ -21,6 +21,7 @@ from ralph_sq.config import RalphConfig, RepeatSequence, SequenceStep
 from ralph_sq.exceptions import RalphExitRequested, RalphContinueRequested
 from ralph_sq.executor import ClaudeExecutor, ExecutorConfig, ExecutionResult
 from ralph_sq.logging_system import log_print
+from ralph_sq.i18n import _
 # Style for the chat prompt
 _chat_prompt_style = Style.from_dict({
     'prompt': '#ffcc00',  # Yellow color
@@ -290,9 +291,9 @@ class Orchestrator:
                             cli_started=False   
                             while True:
                                 if not cli_started:
-                                    log_print("[bold magenta]>>> claude CLI start >>>[/bold magenta]")
+                                    log_print(f"[bold magenta]{_('cli.claude_start')}[/bold magenta]")
                                     cli_started = True
-                                log_print("[bold green]Processing...[/bold green]")
+                                log_print(f"[bold green]{_('cli.processing')}[/bold green]")
                                 result = await self._executor.run(
                                     current_prompt,
                                     on_raw_line=make_raw_line_callback(iterations),
@@ -303,7 +304,7 @@ class Orchestrator:
                                     break
                                 
                                 try:
-                                    log_print("[yellow]Chat Mode (type \'exit\' to end; Alt+Enter to submit)[/yellow]")
+                                    log_print(f"[yellow]{_('cli.chat_mode_hint')}[/yellow]")
                                     session = PromptSession(style=_chat_prompt_style)
                                     user_input = (await session.prompt_async(
                                         [('class:prompt', '>>> ')],
@@ -332,7 +333,7 @@ class Orchestrator:
                             
                             # End CLI section if started
                             if cli_started:
-                                log_print("[bold magenta]<<< claude CLI end <<<[/bold magenta]")
+                                log_print(f"[bold magenta]{_('cli.claude_end')}[/bold magenta]")
                                 cli_started = False
                                 
                         except asyncio.CancelledError:
