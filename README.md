@@ -2,7 +2,7 @@
 
 [English](./README.md) | [简体中文](./README_ZH.md)
 
-![Ralph-sequencer Preview](./preview.png)
+![Ralph-sequencer Preview](./preview1.png)
 
 Read the self-introduction of Ralph-sequencer to understand what it is:
 

@@ -2,7 +2,7 @@
 
 [English](./README.md) | [简体中文](./README_ZH.md)
 
-![Ralph-sequencer 预览](./preview.png)
+![Ralph-sequencer 预览](./preview1.png)
 
 Ralph-sequencer 是一个先进的 Claude Code CLI 智能体编排器。
 
