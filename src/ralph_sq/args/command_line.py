@@ -64,6 +64,9 @@ def create_parser() -> argparse.ArgumentParser:
     # Continue command (skip current step, continue loop when invoked via Bash during run)
     subparsers.add_parser("continue", help=_("help.continue_help"))
 
+    # Update command
+    subparsers.add_parser("update", help=_("help.update_help"))
+
     # Config command
     config_parser = subparsers.add_parser("config", help=_("help.config_help"))
     config_subparsers = config_parser.add_subparsers(dest="config_item", help=_("help.config_items"))

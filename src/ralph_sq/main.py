@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import uuid
+import subprocess
 from pathlib import Path
 
 from ralph_sq.args.command_line import create_parser
@@ -18,6 +19,7 @@ from ralph_sq.settings.persistence import get_setting, set_setting
 from ralph_sq.cli import run_sequences, save_config_snapshot, load_last_state
 
 from rich.panel import Panel
+from rich.prompt import Confirm
 
 
 def main() -> int:
@@ -75,6 +77,7 @@ def main() -> int:
             import yaml
             import shutil
             import glob
+            import fnmatch
             
             template_name = args.name
             
@@ -101,6 +104,10 @@ def main() -> int:
                 console.print(_("cli.error", error=f"install.yaml not found in {template_path}"))
                 return 1
             
+            if not Confirm.ask(_("cli.template_confirm", name=template_name), default=False):
+                console.print(_("cli.template_cancelled"))
+                return 0
+                
             console.print(_("cli.template_installing", name=template_name))
             
             try:
@@ -108,6 +115,11 @@ def main() -> int:
                     install_config = yaml.safe_load(f)
                 
                 copy_files = install_config.get("copy_files", [])
+                
+                # Ensure install.yaml itself is also copied if not already included
+                if "install.yaml" not in copy_files and not any(fnmatch.fnmatch("install.yaml", p) for p in copy_files):
+                    copy_files.append("install.yaml")
+
                 for pattern in copy_files:
                     # Resolve glob patterns relative to template_path
                     files_to_copy = []
@@ -121,8 +133,6 @@ def main() -> int:
                     
                     for src_path_str in files_to_copy:
                         src_path = Path(src_path_str)
-                        if src_path == install_yaml_path:
-                            continue
                             
                         # Calculate relative path to maintain directory structure
                         rel_path = src_path.relative_to(template_path)
@@ -144,6 +154,38 @@ def main() -> int:
                 return 0
             except Exception as e:
                 console.print(_("cli.template_error", error=str(e)))
+                return 1
+
+        if args.command == "update":
+            console.print(_("cli.update_start"))
+            
+            # Check if git is available
+            try:
+                subprocess.run(["git", "--version"], capture_output=True, check=True)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                console.print(f"[red]{_('cli.git_not_found')}[/red]")
+                return 1
+            
+            # Get the project root (where .git should be)
+            project_root = Path(__file__).parent.parent.parent
+            if not (project_root / ".git").exists():
+                console.print(f"[red]{_('cli.not_a_git_repo')}[/red]")
+                return 1
+            
+            try:
+                # Run git pull
+                process = subprocess.run(
+                    ["git", "pull"], 
+                    cwd=project_root, 
+                    capture_output=True, 
+                    text=True, 
+                    check=True
+                )
+                console.print(process.stdout)
+                console.print(f"[green]{_('cli.update_success')}[/green]")
+                return 0
+            except subprocess.CalledProcessError as e:
+                console.print(f"[red]{_('cli.update_error', error=e.stderr)}[/red]")
                 return 1
 
         if args.command == "run":

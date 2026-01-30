@@ -40,10 +40,17 @@
     "template_not_found": "Template '{name}' not found at {path}",
     "template_error": "Error installing template: {error}",
     "template_copying": "Copying {src} to {dest}",
+    "template_confirm": "Install template '{name}'?",
+    "template_cancelled": "Installation cancelled.",
     "chat_mode_hint": "Chat Mode (type 'exit' to end; Alt+Enter to submit)",
     "processing": "Processing...",
     "claude_start": ">>> claude CLI start >>>",
-    "claude_end": "<<< claude CLI end <<<"
+    "claude_end": "<<< claude CLI end <<<",
+    "update_start": "Updating ralph-sq...",
+    "update_success": "ralph-sq updated successfully!",
+    "update_error": "Error updating ralph-sq: {error}",
+    "git_not_found": "Git not found. Please install git to update.",
+    "not_a_git_repo": "Current project is not a git repository."
   },
   "help": {
     "description": "Agent orchestrator for Claude Code CLI",
@@ -64,7 +71,8 @@
     "config_lang_value": "Language code (en, zh) (current: {lang})",
     "config_show_help": "Show current configuration file content",
     "template_help": "Install a template from the templates directory",
-    "template_name": "Template name to install"
+    "template_name": "Template name to install",
+    "update_help": "Update ralph-sq to the latest version via git"
   },
   "status": {
     "completed": "✓ Completed",

@@ -8,7 +8,7 @@ I am Ralph-sequencer 😊, an agent orchestrator. I organize multiple agents to 
 - ✅ Automatically run over 50 system security checks and generate a comprehensive security report 💼.
 
 What I cannot do ☹️:
-1. ✖️ I am not an AGI (Artificial General Intelligence). I cannot do everything based on just one sentence, but I can complete specified tasks based on templates.
+1. ✖️ I am not an AGI (Artificial General Intelligence). I cannot do everything based on just one sentence (I also don't have to🤭), but I can complete specified tasks based on templates.
 2. ✖️ I cannot make decisions for you. Although I can guide you through the decision-making process, AI must be aligned with humans; otherwise, it is dangerous and unreliable.
 3. ✖️ Although I am smart enough to help you with most of the work, I still need your review of the results to provide suggestions and continuously improve my output quality.
 
@@ -25,7 +25,7 @@ Feeling too much pressure? Don't worry!! 🧘‍♂️ Talk to me, and I will gu
 - ✅ 自动化运行超过50项的系统安全性检查，生成全面的系统安全报告💼。
 
 我不能☹️完成什么：
-1.✖️ 我不是AGI通用人工智能，不能根据你的一句话完成所有事情，但是我可以根据模板完成指定任务。（我也不需要）
+1.✖️ 我不是AGI通用人工智能，不能根据你的一句话完成所有事情（我也不需要🤭），但是我可以根据模板完成指定任务。
 2.✖️ 我不能代替你做决策，尽管我能帮引导你完成决策，但是人工智能必须要和人类对齐，否则是危险和不可靠的。
 3.✖️ 我很聪明，会帮你完成大部分工作，但还是需要你的审阅结果，来给出建议不断提高我的输出质量。
 

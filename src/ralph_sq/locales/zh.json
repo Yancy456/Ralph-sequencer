@@ -40,10 +40,17 @@
     "template_not_found": "在 {path} 未找到模板 '{name}'",
     "template_error": "安装模板时出错: {error}",
     "template_copying": "正在将 {src} 复制到 {dest}",
+    "template_confirm": "确定安装模板 '{name}' 吗？",
+    "template_cancelled": "安装已取消。",
     "chat_mode_hint": "聊天模式 (输入 'exit' 结束; Alt+Enter 提交)",
     "processing": "正在处理...",
     "claude_start": ">>> Claude CLI 开始 >>>",
-    "claude_end": "<<< Claude CLI 结束 <<<"
+    "claude_end": "<<< Claude CLI 结束 <<<",
+    "update_start": "正在更新 ralph-sq...",
+    "update_success": "ralph-sq 更新成功！",
+    "update_error": "更新 ralph-sq 时出错: {error}",
+    "git_not_found": "未找到 git。请安装 git 以进行更新。",
+    "not_a_git_repo": "当前项目不是 git 仓库。"
   },
   "help": {
     "description": "Ralph-sq 是一个先进的 Agent 序列编排器",
@@ -64,7 +71,8 @@
     "config_lang_value": "语言代码 (en, zh) (当前: {lang})",
     "config_show_help": "显示当前配置文件内容",
     "template_help": "从模板目录安装模板",
-    "template_name": "要安装的模板名称"
+    "template_name": "要安装的模板名称",
+    "update_help": "通过 git 更新 ralph-sq 到最新版本"
   },
   "status": {
     "completed": "✓ 已完成",
