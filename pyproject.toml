@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "ralph-sq"
 version = "0.1.0"
-description = "Python implementation of Ralph orchestrator for Claude Code CLI"
+description = "Ralph-sequencer is an advanced agent orchestrator"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -39,7 +39,7 @@ dev = [
 ]
 
 [project.scripts]
-ralph-sq = "main:main"
+ralph-sq = "src.main_cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]

@@ -7,7 +7,7 @@ similar to the Rust-based ralph-orchestrator.
 
 __version__ = "0.1.0"
 
-from stream_parser import (
+from .stream_parser import (
     AssistantMessage,
     ClaudeStreamEvent,
     ClaudeStreamParser,
@@ -16,7 +16,7 @@ from stream_parser import (
     Usage,
     UserContentBlock,
 )
-from executor import (
+from .executor import (
     ClaudeExecutor,
     ExecutorConfig,
     ExecutionResult,

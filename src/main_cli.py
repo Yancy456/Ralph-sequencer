@@ -4,19 +4,19 @@ import uuid
 import subprocess
 from pathlib import Path
 
-from args.command_line import create_parser
-from config import RalphConfig, Role, RepeatSequence, SequenceStep
-from i18n import _, i18n
-from logging_system import (
+from .args.command_line import create_parser
+from .config import RalphConfig, Role, RepeatSequence, SequenceStep
+from .i18n import _, i18n
+from .logging_system import (
     console,
     log_print,
     log_print_exception,
     setup_logging,
     set_run_id,
 )
-from orchestrator import OrchestratorConfig
-from settings.persistence import get_setting, set_setting
-from cli import run_sequences, save_config_snapshot, load_last_state
+from .orchestrator import OrchestratorConfig
+from .settings.persistence import get_setting, set_setting
+from .cli import run_sequences, save_config_snapshot, load_last_state
 
 from rich.panel import Panel
 from rich.prompt import Confirm
@@ -59,7 +59,7 @@ def main() -> int:
                     lang = get_setting("language", "en")
                     console.print(_("cli.current_setting", key="language", value=lang))
             elif args.config_item == "show":
-                from settings.persistence import SETTINGS_FILE
+                from .settings.persistence import SETTINGS_FILE
                 config_path = SETTINGS_FILE
                 if config_path.exists():
                     from rich.syntax import Syntax
