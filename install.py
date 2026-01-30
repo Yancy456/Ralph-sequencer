@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Cross-platform installation script for ralph-py.
+Cross-platform installation script for ralph-sq.
 
-This script installs ralph-py globally using pip, ensuring cross-platform
+This script installs ralph-sq globally using pip, ensuring cross-platform
 compatibility across Windows, Linux, and macOS.
 
 Usage:
@@ -64,7 +64,7 @@ def install_package(dev: bool = False, user: bool = False) -> bool:
         print(f"❌ Error: pyproject.toml not found at {pyproject_path}")
         return False
     
-    print(f"\n📦 Installing ralph-py from {project_root}")
+    print(f"\n📦 Installing ralph-sq from {project_root}")
     
     # Build pip install command
     cmd = [sys.executable, "-m", "pip", "install"]
@@ -122,26 +122,26 @@ def install_package(dev: bool = False, user: bool = False) -> bool:
 
 
 def check_command_available() -> None:
-    """Check if the ralph-py command is available after installation."""
+    """Check if the ralph-sq command is available after installation."""
     print("\n🔍 Verifying installation...")
     
     # Check if command exists
     try:
         result = subprocess.run(
-            ["ralph-py", "--help"],
+            ["ralph-sq", "--help"],
             capture_output=True,
             text=True,
             timeout=5,
         )
         if result.returncode == 0:
-            print("✓ ralph-py command is available")
+            print("✓ ralph-sq command is available")
             print("\n📖 Usage:")
-            print("   ralph-py run -p \"your prompt\"")
-            print("   ralph-py --help")
+            print("   ralph-sq run -p \"your prompt\"")
+            print("   ralph-sq --help")
         else:
-            print("⚠️  ralph-py command found but returned an error")
+            print("⚠️  ralph-sq command found but returned an error")
     except FileNotFoundError:
-        print("⚠️  ralph-py command not found in PATH")
+        print("⚠️  ralph-sq command not found in PATH")
         print("\n💡 The package is installed, but the command may not be in your PATH.")
         if platform.system() == "Windows":
             print("   On Windows, you may need to restart your terminal or add")
@@ -158,7 +158,7 @@ def check_command_available() -> None:
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Install ralph-py globally (cross-platform)",
+        description="Install ralph-sq globally (cross-platform)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -182,7 +182,7 @@ Examples:
     args = parser.parse_args()
     
     print("=" * 60)
-    print("🚀 ralph-py Installation Script")
+    print("🚀 ralph-sq Installation Script")
     print("=" * 60)
     print(f"Platform: {platform.system()} {platform.release()}")
     print()

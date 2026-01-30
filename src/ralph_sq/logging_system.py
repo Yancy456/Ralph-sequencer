@@ -1,5 +1,5 @@
 """
-Logging system for ralph-py.
+Logging system for ralph-sq.
 
 Provides console and file logging with rich formatting.
 """

@@ -1,23 +1,37 @@
 #!/usr/bin/env python3
 """
-CLI entry point for ralph-py.
+CLI Monitor for ralph-sq.
 
-Usage:
-    ralph-py run --config              # Run with ralph.yaml
-    ralph-py run --config <path>       # Run with custom config file
 """
 
-import argparse
 import asyncio
 import shutil
 import json
 import logging
 import os
-import sys
-import uuid
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+from rich.panel import Panel
+
+from ralph_sq.config import RalphConfig
+from ralph_sq.i18n import _, i18n
+from ralph_sq.exceptions import RalphExitRequested, RalphContinueRequested
+from ralph_sq.executor import ExecutionResult
+from ralph_sq.orchestrator import Orchestrator, OrchestratorConfig, LoopStatus
+from ralph_sq.stream_parser import (
+    ClaudeStreamParser,
+    AssistantEvent,
+    TextContent,
+    ToolUseContent,
+)
+from ralph_sq.logging_system import (
+    log_print,
+    get_run_id,
+    get_run_dir,
+)
 
 OUTPUT_DIR = Path(".ralph_debug")
 
@@ -45,28 +59,6 @@ def format_duration(ms: int) -> str:
     seconds = total_seconds % 60
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-from rich.panel import Panel
-import re
-
-from ralph_py.config import RalphConfig, Role, RepeatSequence, SequenceStep
-from ralph_py.exceptions import RalphExitRequested, RalphContinueRequested
-from ralph_py.executor import ExecutionResult
-from ralph_py.orchestrator import Orchestrator, OrchestratorConfig, LoopStatus
-from ralph_py.stream_parser import (
-    ClaudeStreamParser,
-    AssistantEvent,
-    TextContent,
-    ToolUseContent,
-)
-from ralph_py.logging_system import (
-    console,
-    log_print,
-    log_print_exception,
-    setup_logging,
-    set_run_id,
-    get_run_id,
-    get_run_dir,
-)
 
 
 def _get_tool_detail(name: str, inputs: dict) -> str:
@@ -185,61 +177,6 @@ def load_last_state() -> Optional[dict]:
     return None
 
 
-def create_parser() -> argparse.ArgumentParser:
-    """Create the argument parser."""
-    parser = argparse.ArgumentParser(
-        prog="ralph-py",
-        description="Python orchestrator for Claude Code CLI",
-    )
-    
-    subparsers = parser.add_subparsers(dest="command", help="Commands")
-    
-    # Run command
-    run_parser = subparsers.add_parser("run", help="Run Claude with configuration file")
-    run_parser.add_argument(
-        "-m", "--max-iterations",
-        type=int,
-        default=1,
-        help="Maximum loop iterations (default: 1)",
-    )
-    run_parser.add_argument(
-        "--timeout",
-        type=int,
-        default=0,
-        help="Per-iteration timeout in seconds (default: 0, no limit)",
-    )
-    run_parser.add_argument(
-        "-C", "--directory",
-        type=str,
-        help="Working directory for execution",
-    )
-    run_parser.add_argument(
-        "-c", "--config",
-        type=str,
-        nargs="?",
-        const="ralph.yaml",
-        help="Use configuration file to execute repeat sequences (default: ralph.yaml if flag provided)",
-    )
-    run_parser.add_argument(
-        "-p", "--prompt",
-        type=str,
-        help="Run a single iteration with an inline prompt using a default role (quick test mode)",
-    )
-    run_parser.add_argument(
-        "-r", "--resume",
-        action="store_true",
-        help="Resume from the last saved iteration state (if available)",
-    )
-
-    # Exit command
-    subparsers.add_parser("exit", help="Terminate ralph-py")
-
-    # Continue command (skip current step, continue loop when invoked via Bash during run)
-    subparsers.add_parser("continue", help="Skip current step and continue to next (when invoked during run)")
-
-    return parser
-
-
 async def run_sequences(
     ralph_config: RalphConfig,
     config: OrchestratorConfig,
@@ -269,34 +206,38 @@ async def run_sequences(
             r"[bold green]\1[/bold green]",
             step_info,
         )
-        highlighted_step_info = f"Progress: {highlighted_step_info}"
+        highlighted_step_info = _("cli.progress", info=highlighted_step_info)
         lines = []
         if sequence_info:
             lines.append(sequence_info)
+        
+        prompt_preview_val = prompt_preview if prompt_preview else _("cli.prompt_empty")
+        memory_status = _("cli.memory_disabled")
+        
         lines.extend([
             highlighted_step_info,
-            f"Role: [yellow]{role}[/yellow]",
-            f"Prompt: {prompt_preview}" if prompt_preview else "Prompt: (empty)",
-            f"Memory: [red]✗Disable[/red]"
+            _("cli.role", role=f"[yellow]{role}[/yellow]"),
+            _("cli.prompt", prompt=prompt_preview_val),
+            _("cli.memory", status=f"[red]{memory_status}[/red]")
         ])
         content = "\n".join(lines)
         log_print(Panel(
             content,
-            title=f"[bold green]Iteration {iteration} Start[/bold green]",
+            title=f"[bold green]{_('cli.iteration_start', iteration=iteration)}[/bold green]",
             border_style="green",
         ))
     
     def on_iteration(iteration: int, result: ExecutionResult) -> None:
         status = "✓" if result.success else "✗"
-        lines = [f"[bold]Iteration {iteration}[/bold] {status}"]
+        lines = [f"[bold]{_('cli.iteration_result', iteration=iteration)}[/bold] {status}"]
         if result.session_result:
             duration_str = format_duration(result.session_result.duration_ms)
-            lines.append(f"[dim]Cost: ${result.session_result.total_cost_usd:.4f}[/dim]")
-            lines.append(f"[dim]Duration: {duration_str}[/dim]")
+            lines.append(f"[dim]{_('cli.cost', cost=f'{result.session_result.total_cost_usd:.4f}')}[/dim]")
+            lines.append(f"[dim]{_('cli.duration', duration=duration_str)}[/dim]")
         content = "\n".join(lines)
         log_print(Panel(
             content,
-            title=f"[bold blue]Iteration {iteration} Result[/bold blue]",
+            title=f"[bold blue]{_('cli.iteration_result', iteration=iteration)}[/bold blue]",
             border_style="blue",
         ))
     
@@ -345,9 +286,9 @@ async def run_sequences(
                         log_print(f"{agent_prefix}[yellow]\\[{block.name}][/yellow]{detail}")
                         if block.name == "Bash":
                             cmd = (block.input.get("command") or "").strip()
-                            if cmd.startswith("ralph-py exit"):
+                            if cmd.startswith("ralph-sq exit"):
                                 raise RalphExitRequested
-                            if cmd.startswith("ralph-py continue"):
+                            if cmd.startswith("ralph-sq continue"):
                                 raise RalphContinueRequested
         else:
             # For non-JSON output (plain text mode), treat as message
@@ -378,22 +319,22 @@ async def run_sequences(
     
     # Print final summary
     status_emoji = {
-        LoopStatus.COMPLETED: "[green]✓ Completed[/green]",
-        LoopStatus.MAX_ITERATIONS: "[yellow]⚠ Max iterations reached[/yellow]",
-        LoopStatus.TIMEOUT: "[red]⏱ Timeout[/red]",
-        LoopStatus.INTERRUPTED: "[yellow]⚡ Interrupted[/yellow]",
-        LoopStatus.ERROR: "[red]✗ Error[/red]",
-        LoopStatus.RALPH_EXIT_REQUESTED: "[green]✓ RalphExitRequested[/green]",
-        LoopStatus.RALPH_CONTINUE_REQUESTED: "[green]✓ RalphContinueRequested[/green]",
+        LoopStatus.COMPLETED: _("status.completed"),
+        LoopStatus.MAX_ITERATIONS: _("status.max_iterations"),
+        LoopStatus.TIMEOUT: _("status.timeout"),
+        LoopStatus.INTERRUPTED: _("status.interrupted"),
+        LoopStatus.ERROR: _("status.error"),
+        LoopStatus.RALPH_EXIT_REQUESTED: _("status.exit_requested"),
+        LoopStatus.RALPH_CONTINUE_REQUESTED: _("status.continue_requested"),
     }.get(loop_result.status, str(loop_result.status))
     
     duration_str = format_duration(loop_result.total_duration_ms)
     log_print(Panel(
-        f"Status: {status_emoji}\n"
-        f"Iterations: {loop_result.iterations}\n"
-        f"Duration: {duration_str}\n"
-        f"Total Cost: ${loop_result.total_cost_usd:.4f}",
-        title="[bold]Sequence Execution Result[/bold]",
+        f"{_('cli.status', status=status_emoji)}\n"
+        f"{_('cli.iterations', count=loop_result.iterations)}\n"
+        f"{_('cli.duration', duration=duration_str)}\n"
+        f"{_('cli.total_cost', cost=f'{loop_result.total_cost_usd:.4f}')}",
+        title=f"[bold]{_('cli.sequence_execution_result')}[/bold]",
         border_style=(
             "blue"
             if loop_result.status == LoopStatus.COMPLETED
@@ -402,133 +343,6 @@ async def run_sequences(
     ))
     
     if loop_result.error:
-        log_print(f"[red]Error: {loop_result.error}[/red]")
+        log_print(f"[red]{_('cli.error', error=loop_result.error)}[/red]")
     
     return 0
-
-
-def main() -> int:
-    """Main entry point."""
-    parser = create_parser()
-    args = parser.parse_args()
-    
-    if not args.command:
-        parser.print_help()
-        return 0
-    
-    run_id = str(uuid.uuid4())
-    set_run_id(run_id)
-
-    setup_logging()
-    
-    try:
-        if args.command == "exit":
-            console.print("ralph-py has been terminated")
-            return 0
-        if args.command == "continue":
-            console.print("ralph-py continue (skips current step when invoked via Bash during run)")
-            return 0
-        if args.command == "run":
-            # Quick prompt mode: run a single iteration with an inline prompt
-            if args.prompt:
-                if args.config:
-                    log_print("[yellow]Warning: --prompt provided; ignoring --config and using inline prompt only[/yellow]")
-                
-                # Build an in-memory config with a single default role and one sequence
-                default_role = Role(name="default")
-                step = SequenceStep(role="default", prompt=args.prompt, new_session=True)
-                repeat_seq = RepeatSequence(steps=[step], repeat=1)
-                ralph_config = RalphConfig(
-                    roles={"default": default_role},
-                    repeat_sequences=[repeat_seq],
-                )
-                
-                # Use a synthetic config path for state tracking
-                config_path = Path("INLINE_PROMPT")
-                
-                log_print(Panel(
-                    "Running single iteration with inline prompt",
-                    title="[bold blue]Quick Prompt Run[/bold blue]",
-                    border_style="blue",
-                ))
-            else:
-                # Check if using config file
-                # If --config is provided without value, use default "ralph.yaml"
-                config_file = args.config if args.config else None
-                if not config_file:
-                    log_print("[red]Error: --config is required. Use --config or --config <path>[/red]")
-                    return 0
-                
-                # Load configuration
-                try:
-                    config_path = Path(config_file)
-                    if not config_path.is_absolute():
-                        if args.directory:
-                            config_path = Path(args.directory) / config_path
-                        else:
-                            config_path = Path.cwd() / config_path
-                    ralph_config = RalphConfig.load(config_path)
-                except FileNotFoundError as e:
-                    log_print(f"[red]Error: {e}[/red]")
-                    return 0
-                except Exception as e:
-                    log_print(f"[red]Error loading configuration: {e}[/red]")
-                    log_print_exception()
-                    return 0
-                
-                if not ralph_config.repeat_sequences:
-                    log_print("[yellow]Warning: No repeat_sequences found in configuration file[/yellow]")
-                    return 0
-                
-                # Save a snapshot of the configuration for this run
-                snapshot_path = save_config_snapshot(config_path)
-                
-                log_print(Panel(
-                    f"Loaded {len(ralph_config.repeat_sequences)} sequence(s) from configuration",
-                    title="[bold blue]Configuration Loaded[/bold blue]",
-                    border_style="blue",
-                ))
-            
-            # Determine resume point if requested
-            resume_from_iteration = 0
-            if args.resume and not args.prompt:
-                state = load_last_state()
-                if state:
-                    state_config = Path(state.get("config_path", ""))
-                    state_iter = state.get("iteration", 0)
-                    if state_config == config_path and isinstance(state_iter, int) and state_iter > 0:
-                        resume_from_iteration = max(0, state_iter - 1)
-                        log_print(f"[yellow]Resuming from iteration {state_iter} using state in {state_config}[/yellow]")
-                    else:
-                        log_print("[yellow]No compatible state found to resume from; starting from beginning.[/yellow]")
-                else:
-                    log_print("[yellow]No previous state found; starting from beginning.[/yellow]")
-            
-            # Orchestrator config
-            orchestrator_config = OrchestratorConfig(
-                max_iterations=args.max_iterations,
-                iteration_timeout_secs=args.timeout,
-                working_directory=args.directory,
-                resume_from_iteration=resume_from_iteration,
-                session_id=run_id,
-                disallowed_tools["AskUserQuestion"],
-            )
-            
-            # Run sequences
-            return asyncio.run(run_sequences(ralph_config, orchestrator_config, config_path))
-        
-        else:
-            parser.print_help()
-            return 0
-            
-    except KeyboardInterrupt:
-        log_print("\n[yellow]Interrupted[/yellow]")
-        return 0
-    except Exception as e:
-        log_print(f"[red]Error: {e}[/red]")
-        log_print_exception()
-        return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

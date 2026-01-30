@@ -40,6 +40,7 @@ class RalphConfig:
     roles: dict[str, Role] = field(default_factory=dict)
     repeat_sequences: list[RepeatSequence] = field(default_factory=list)
     interactive: bool = False
+    language: str = "en"
     
     @classmethod
     def load(cls, config_path: str | Path) -> "RalphConfig":
@@ -68,6 +69,7 @@ class RalphConfig:
         
         # Parse global options
         interactive = data.get("interactive", False)
+        language = data.get("language", "en")
         
         # Parse roles
         roles = {}
@@ -103,7 +105,7 @@ class RalphConfig:
                     repeat = seq_data.get("repeat", 1)
                     repeat_sequences.append(RepeatSequence(steps=steps, repeat=repeat))
         
-        return cls(roles=roles, repeat_sequences=repeat_sequences, interactive=interactive)
+        return cls(roles=roles, repeat_sequences=repeat_sequences, interactive=interactive, language=language)
     
     def get_role_prompt(self, role_name: str, working_directory: Optional[str] = None) -> Optional[str]:
         """

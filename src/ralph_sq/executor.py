@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import AsyncIterator, Callable, Optional, Any
 
-from ralph_py.exceptions import RalphExitRequested, RalphContinueRequested
-from ralph_py.stream_parser import (
+from ralph_sq.exceptions import RalphExitRequested, RalphContinueRequested
+from ralph_sq.stream_parser import (
     ClaudeStreamParser,
     AssistantEvent,
     ResultEvent,
@@ -159,7 +159,7 @@ class ClaudeExecutor:
         logger.debug(f"Executing: {' '.join(cmd_args)}")
         
         try:
-            # Create subprocess
+            # Create subprocess ()
             self._process = await asyncio.create_subprocess_exec(
                 *cmd_args,
                 stdout=asyncio.subprocess.PIPE,
