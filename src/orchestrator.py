@@ -403,4 +403,11 @@ class Orchestrator:
                 loop.remove_signal_handler(signal.SIGINT)
             except (NotImplementedError, ValueError):
                 pass
+            # Cleanup executor if it exists
+            if self._executor:
+                try:
+                    # Ensure any running process is properly cleaned up
+                    await self._executor._cleanup_process()
+                except Exception:
+                    pass
             self._executor = None

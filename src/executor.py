@@ -61,16 +61,17 @@ class ExecutorConfig:
     # Command configuration
     command: str = "claude"
     output_format: OutputFormat = OutputFormat.STREAM_JSON
-    
+
     # Session configuration
     resume: bool = False  # Whether to resume a session (-r flag)
     session_id: Optional[str] = None  # Session ID for resume
-    
+
     # Execution configuration
     idle_timeout_secs: int = 300  # 5 minutes default
     working_directory: Optional[str] = None  # Working directory for command
     interactive: bool = False  # Whether to allow interactive input
-    disallowed_tools: list[str] = field(default_factory=lambda: ["AskUserQuestion"])
+    disallowed_tools: list[str] = field(
+        default_factory=lambda: ["AskUserQuestion"])
 
 
 # Type alias for event callbacks
@@ -81,17 +82,17 @@ RawLineCallback = Callable[[str], None]  # Callback for raw NDJSON lines
 class ClaudeExecutor:
     """
     Executor for running Claude Code CLI.
-    
+
     Supports subprocess execution with streaming NDJSON parsing.
     """
-    
+
     def __init__(
-        self, 
+        self,
         config: Optional[ExecutorConfig] = None,
     ):
         """
         Initialize the executor.
-        
+
         Args:
             config: Executor configuration
         """
@@ -100,17 +101,17 @@ class ClaudeExecutor:
         self._interrupted = False
         # Resolve command path
         self._resolved_command = self._resolve_command(self.config.command)
-    
+
     def _resolve_command(self, command: str) -> str:
         """
         Resolve the command path, handling Windows-specific issues.
-        
+
         Args:
             command: The command name or path
-            
+
         Returns:
             Resolved command path
-            
+
         Raises:
             FileNotFoundError: If the command cannot be found
         """
@@ -127,35 +128,35 @@ class ClaudeExecutor:
                 f"Command not found: {command}. "
                 f"Please ensure the Claude CLI is installed and accessible."
             )
-        
+
         # Try to find the command in PATH
         resolved = shutil.which(command)
         if resolved:
             return resolved
-        
+
         # On Windows, try with .exe extension
         if sys.platform == "win32":
             resolved = shutil.which(command + ".exe")
             if resolved:
                 return resolved
-        
+
         # Command not found
         raise FileNotFoundError(
             f"Command '{command}' not found in PATH. "
             f"Please ensure the Claude CLI is installed and added to your PATH. "
             f"On Windows, you may need to use 'claude.exe' or provide the full path."
         )
-    
+
     def _build_command(
-        self, 
+        self,
         prompt: str
     ) -> tuple[list[str], Optional[str], Optional[tempfile.NamedTemporaryFile]]:
         """
         Build the full command with arguments for execution.
-        
+
         Args:
             prompt: The prompt text to pass to Claude
-            
+
         Returns:
             Tuple of (command_args, stdin_input, temp_file)
             - command_args: Full command line as a list
@@ -170,12 +171,12 @@ class ClaudeExecutor:
         ]
 
         # Add resume flag only if resume is True
-        if self.config.resume:
+        if self.config.resume and self.config.session_id:
             args.extend(["-r", self.config.session_id])
-        
+
         elif self.config.session_id:
             args.extend(["--session-id", self.config.session_id])
-        
+
         # Add prompt flag and prompt
         args.append("-p")
         args.append(prompt)
@@ -183,9 +184,9 @@ class ClaudeExecutor:
         if self.config.disallowed_tools:
             args.append("--disallowed-tools")
             args.append(",".join(self.config.disallowed_tools))
-        
+
         return [self._resolved_command] + args, None, None
-    
+
     async def run(
         self,
         prompt: str,
@@ -194,19 +195,19 @@ class ClaudeExecutor:
     ) -> ExecutionResult:
         """
         Run Claude with the given prompt.
-        
+
         Args:
             prompt: The prompt to execute
             on_event: Callback for raw stream events
             on_raw_line: Callback for raw NDJSON lines (for real-time output)
-            
+
         Returns:
             ExecutionResult with output and status
         """
         # Build command
         cmd_args, stdin_input, temp_file = self._build_command(prompt)
         logger.debug(f"Executing: {' '.join(cmd_args)}")
-        
+
         try:
             # Create subprocess ()
             self._process = await asyncio.create_subprocess_exec(
@@ -217,26 +218,26 @@ class ClaudeExecutor:
                 cwd=self.config.working_directory,
                 env={**os.environ, "TERM": "xterm-256color"},
             )
-            
+
             # Write stdin if needed
             if stdin_input and self._process.stdin:
                 self._process.stdin.write(stdin_input.encode())
                 await self._process.stdin.drain()
                 self._process.stdin.close()
-            
+
             # Collect output
             output_lines: list[str] = []
             extracted_text: list[str] = []
             session_result: Optional[SessionResult] = None
-            
+
             if self._process.stdout:
                 async for line in self._read_lines(self._process.stdout):
                     output_lines.append(line)
-                    
+
                     # Callback for raw line (real-time output)
                     if on_raw_line:
                         on_raw_line(line)
-                    
+
                     # Parse NDJSON if applicable
                     if self.config.output_format == OutputFormat.STREAM_JSON:
                         event = ClaudeStreamParser.parse_line(line)
@@ -244,14 +245,14 @@ class ClaudeExecutor:
                             # Dispatch callbacks
                             if on_event:
                                 on_event(event)
-                            
+
                             if isinstance(event, AssistantEvent):
                                 for block in event.message.content:
                                     if isinstance(block, TextContent):
                                         extracted_text.append(block.text)
                                     elif isinstance(block, ToolUseContent):
                                         pass
-                            
+
                             elif isinstance(event, ResultEvent):
                                 session_result = SessionResult(
                                     duration_ms=event.duration_ms,
@@ -262,19 +263,19 @@ class ClaudeExecutor:
                     else:
                         # Plain text output
                         pass
-            
+
             # Wait for process to complete
             exit_code = await self._process.wait()
-            
+
             # Determine termination type
             termination = TerminationType.NATURAL
             if self._interrupted:
                 termination = TerminationType.USER_INTERRUPT
             elif exit_code == 130:  # SIGINT
                 termination = TerminationType.USER_INTERRUPT
-            
+
             output = "\n".join(output_lines)
-            
+
             return ExecutionResult(
                 output=output,
                 stripped_output=_strip_ansi(output),
@@ -284,13 +285,13 @@ class ClaudeExecutor:
                 termination=termination,
                 session_result=session_result,
             )
-            
+
         except asyncio.CancelledError:
             if self._process:
                 self._process.terminate()
                 await self._process.wait()
             raise
-        
+
         finally:
             # Cleanup temp file
             if temp_file:
@@ -298,15 +299,16 @@ class ClaudeExecutor:
                     os.unlink(temp_file.name)
                 except Exception:
                     pass
-            self._process = None
-    
+            # Properly cleanup subprocess on Windows
+            await self._cleanup_process()
+
     async def _read_lines(
-        self, 
+        self,
         stream: asyncio.StreamReader
     ) -> AsyncIterator[str]:
         """Read lines from stream with timeout handling."""
         buffer = b""
-        
+
         while True:
             try:
                 # Use wait_for with timeout if configured
@@ -317,26 +319,27 @@ class ClaudeExecutor:
                     )
                 else:
                     chunk = await stream.read(4096)
-                
+
                 if not chunk:
                     # EOF - yield any remaining buffer
                     if buffer:
                         yield buffer.decode(errors='replace')
                     break
-                
+
                 buffer += chunk
-                
+
                 # Split on newlines and yield complete lines
                 while b"\n" in buffer:
                     line, buffer = buffer.split(b"\n", 1)
                     yield line.decode(errors='replace')
-                    
+
             except asyncio.TimeoutError:
-                logger.warning(f"Idle timeout after {self.config.idle_timeout_secs}s")
+                logger.warning(
+                    f"Idle timeout after {self.config.idle_timeout_secs}s")
                 if self._process:
                     self._process.terminate()
                 break
-    
+
     async def interrupt(self) -> None:
         """Interrupt the running process."""
         self._interrupted = True
@@ -345,7 +348,7 @@ class ClaudeExecutor:
                 self._process.send_signal(signal.SIGINT)
             except ProcessLookupError:
                 pass  # Process already exited
-    
+
     async def terminate(self) -> None:
         """Terminate the running process."""
         self._interrupted = True
@@ -354,6 +357,54 @@ class ClaudeExecutor:
                 self._process.terminate()
             except ProcessLookupError:
                 pass
+
+    async def _cleanup_process(self) -> None:
+        """
+        Properly cleanup subprocess, especially important on Windows.
+
+        On Windows with ProactorEventLoop, subprocess transports must be
+        explicitly closed before the event loop closes to avoid warnings.
+        """
+        if not self._process:
+            return
+
+        process = self._process
+        self._process = None  # Clear reference early to avoid re-entry
+
+        try:
+            # Close stdin if it exists (StreamWriter)
+            if process.stdin:
+                try:
+                    if not process.stdin.is_closing():
+                        process.stdin.close()
+                        await process.stdin.wait_closed()
+                except Exception:
+                    pass
+
+            # Wait for process to terminate if still running
+            if process.returncode is None:
+                try:
+                    # Give it a moment to terminate gracefully
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        # Force kill if it doesn't terminate
+                        try:
+                            process.kill()
+                            await process.wait()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            # On Windows, we need to ensure the transport is closed
+            # The stdout/stderr StreamReaders will be closed when the process terminates
+            # and the transport is cleaned up. We just need to make sure the process
+            # has fully terminated.
+
+        except Exception:
+            # Ignore any errors during cleanup
+            pass
 
 
 def _strip_ansi(text: str) -> str:
