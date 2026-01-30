@@ -6,7 +6,7 @@ Ralph-sequencer is an advanced agent orchestrator for Claude Code CLI.
 
 Read the self-introduction of Ralph-sequencer to understand what it is:
 
-```
+
 I am Ralph-sequencer 😊, an agent orchestrator. I organize multiple agents to complete complex tasks like a symphony conductor 🎼. What I can do ✅:
 
 - ✅ Run unsupervised for 2 hours to complete a 300,000-word Shakespearean novel 📖.
@@ -20,7 +20,6 @@ What I cannot do ☹️:
 3. ✖️ Although I am smart enough to help you with most of the work, I still need your review of the results to provide suggestions and continuously improve my output quality.
 
 Feeling too much pressure? Don't worry!! 🧘‍♂️ Talk to me, and I will guide you through the agent orchestration.
-```
 
 ## Requirements
 

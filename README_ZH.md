@@ -1,4 +1,4 @@
-# Ralph-sequencer (智能体编排器)
+# Ralph-sequencer
 
 [English](./README.md) | [简体中文](./README_ZH.md)
 
@@ -6,7 +6,6 @@ Ralph-sequencer 是一个先进的 Claude Code CLI 智能体编排器。
 
 阅读 Ralph-sequencer 的自我介绍以了解它的功能：
 
-```
 我是 Ralph-sequencer 😊，一个智能体编排器。我像交响乐团的指挥一样组织多个智能体来完成复杂的任务 🎼。 我可以帮助你完成 ✅ 什么：
 
 - ✅ 无人值守运行 2 小时，完成一部 30 万字的莎士比亚风格小说 📖。
@@ -20,7 +19,7 @@ Ralph-sequencer 是一个先进的 Claude Code CLI 智能体编排器。
 3. ✖️ 虽然我足够聪明，可以帮你完成大部分工作，但我仍需要你审阅结果并提供建议，以持续优化输出质量。
 
 感到压力太大？别担心！！🧘‍♂️ 与我交谈，我将引导你完成智能体编排。
-```
+
 
 ## 环境要求
 
@@ -40,8 +39,7 @@ python install.py
 ## 通过与 Ralph-sequencer Guider 对话来了解项目！
 
 ```bash
-mkdir guider_demo # 进入一个空文件夹
-cd guider_demo
+cd guider_demo # 进入一个空文件夹
 ralph-sq template guide # 安装Guider模板
 ralph-sq run # 指引员将带你了解整个项目
 ```
