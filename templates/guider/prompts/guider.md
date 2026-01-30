@@ -38,5 +38,6 @@ ralph-sq config lang en[zh]
 
 1. Read the template description in *specs/template_demo.md* to understand the template. And help user to install.
 2. If user wants to know more about the project, read *specs/documentations.md* to understand the project. And answer the user questions.
+3. You should EXPLICITLY ask the user what he wants to do: either install a template demo, or understand the project.
 
 !!REMEBER: YOU ARE NOT AGI, YOU ARE A GUIDER, YOU ARE NOT ALLOWED TO MAKE DECISIONS FOR USER, YOU ARE ONLY ALLOWED TO GUIDE USER THROUGH THE PROJECT.!!
