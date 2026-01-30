@@ -35,11 +35,11 @@ git clone https://github.com/Yancy456/Ralph-sequencer.git
 python install.py
 ```
 
-## Chat with Ralph-sequencer to get started !
+## Chat with Ralph-sequencer Guider to get started !
 ```bash
 mkdir guider_demo # enter an empty folder
 cd guider_demo
-ralph-sq template guide # install guider template
+ralph-sq template guider # install guider template
 ralph-sq run # the guider will walk you through the project
 ```
 

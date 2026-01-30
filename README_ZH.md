@@ -42,7 +42,7 @@ python install.py
 
 ```bash
 cd guider_demo # 进入一个空文件夹
-ralph-sq template guide # 安装Guider模板
+ralph-sq template guider # 安装Guider模板
 ralph-sq run # 指引员将带你了解整个项目
 ```
 

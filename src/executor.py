@@ -8,7 +8,9 @@ with streaming NDJSON parsing.
 import asyncio
 import logging
 import os
+import shutil
 import signal
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
@@ -96,6 +98,53 @@ class ClaudeExecutor:
         self.config = config or ExecutorConfig()
         self._process: Optional[asyncio.subprocess.Process] = None
         self._interrupted = False
+        # Resolve command path
+        self._resolved_command = self._resolve_command(self.config.command)
+    
+    def _resolve_command(self, command: str) -> str:
+        """
+        Resolve the command path, handling Windows-specific issues.
+        
+        Args:
+            command: The command name or path
+            
+        Returns:
+            Resolved command path
+            
+        Raises:
+            FileNotFoundError: If the command cannot be found
+        """
+        # If it's already an absolute path, check if it exists
+        if os.path.isabs(command):
+            if os.path.exists(command):
+                return command
+            # On Windows, try adding .exe extension
+            if sys.platform == "win32" and not command.endswith(".exe"):
+                exe_path = command + ".exe"
+                if os.path.exists(exe_path):
+                    return exe_path
+            raise FileNotFoundError(
+                f"Command not found: {command}. "
+                f"Please ensure the Claude CLI is installed and accessible."
+            )
+        
+        # Try to find the command in PATH
+        resolved = shutil.which(command)
+        if resolved:
+            return resolved
+        
+        # On Windows, try with .exe extension
+        if sys.platform == "win32":
+            resolved = shutil.which(command + ".exe")
+            if resolved:
+                return resolved
+        
+        # Command not found
+        raise FileNotFoundError(
+            f"Command '{command}' not found in PATH. "
+            f"Please ensure the Claude CLI is installed and added to your PATH. "
+            f"On Windows, you may need to use 'claude.exe' or provide the full path."
+        )
     
     def _build_command(
         self, 
@@ -135,7 +184,7 @@ class ClaudeExecutor:
             args.append("--disallowed-tools")
             args.append(",".join(self.config.disallowed_tools))
         
-        return [self.config.command] + args, None, None
+        return [self._resolved_command] + args, None, None
     
     async def run(
         self,
