@@ -206,8 +206,6 @@ class ClaudeExecutor:
         """
         # Build command
         cmd_args, stdin_input, temp_file = self._build_command(prompt)
-        logger.debug(f"Executing: {' '.join(cmd_args)}")
-
         try:
             # Create subprocess ()
             self._process = await asyncio.create_subprocess_exec(

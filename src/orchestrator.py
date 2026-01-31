@@ -67,6 +67,14 @@ class LoopResult:
     error: Optional[str] = None
 
 
+class LoopInterrupted(Exception):
+    """Raised when the loop should exit due to an external interrupt."""
+
+    def __init__(self, loop_result: LoopResult):
+        super().__init__("Loop interrupted")
+        self.loop_result = loop_result
+
+
 # Callback types
 IterationCallback = Callable[[int, ExecutionResult], None]
 # iteration, sequence_info, step_info, role, prompt_preview
@@ -131,6 +139,16 @@ class Orchestrator:
         iterations = 0
         total_cost = 0.0
         outputs: list[str] = []
+
+        def _build_loop_result(status: LoopStatus) -> LoopResult:
+            elapsed = time.time() - start_time
+            return LoopResult(
+                status=status,
+                iterations=iterations,
+                total_duration_ms=int(elapsed * 1000),
+                total_cost_usd=total_cost,
+                outputs=list(outputs),
+            )
         
         # Set up signal handlers
         loop = asyncio.get_event_loop()
@@ -149,31 +167,15 @@ class Orchestrator:
             pass
         
         try:
-            # Execute each repeat sequence
             for seq_idx, repeat_seq in enumerate(config.repeat_sequences):
                 if self._interrupted:
-                    return LoopResult(
-                        status=LoopStatus.INTERRUPTED,
-                        iterations=iterations,
-                        total_duration_ms=int((time.time() - start_time) * 1000),
-                        total_cost_usd=total_cost,
-                        outputs=outputs,
-                    )
-                
-                # Sequence-level info is now handled by CLI via on_iteration_start
-                logger.debug(f"Executing sequence {seq_idx + 1}/{len(config.repeat_sequences)} with {repeat_seq.repeat} repeats")
-                
+                    raise LoopInterrupted(_build_loop_result(LoopStatus.INTERRUPTED))
+
                 # Repeat the sequence
                 for repeat_num in range(repeat_seq.repeat):
                     if self._interrupted:
-                        return LoopResult(
-                            status=LoopStatus.INTERRUPTED,
-                            iterations=iterations,
-                            total_duration_ms=int((time.time() - start_time) * 1000),
-                            total_cost_usd=total_cost,
-                            outputs=outputs,
-                        )
-                    
+                        raise LoopInterrupted(_build_loop_result(LoopStatus.INTERRUPTED))
+
                     # Check total timeout (0 = no limit)
                     elapsed = time.time() - start_time
                     if self.config.loop_timeout_secs > 0 and elapsed > self.config.loop_timeout_secs:
@@ -184,47 +186,19 @@ class Orchestrator:
                             total_cost_usd=total_cost,
                             outputs=outputs,
                         )
-                    
+
                     # Execute each step in the sequence
                     for step_idx, step in enumerate(repeat_seq.steps):
                         if self._interrupted:
-                            return LoopResult(
-                                status=LoopStatus.INTERRUPTED,
-                                iterations=iterations,
-                                total_duration_ms=int((time.time() - start_time) * 1000),
-                                total_cost_usd=total_cost,
-                                outputs=outputs,
-                            )
-                        
+                            raise LoopInterrupted(_build_loop_result(LoopStatus.INTERRUPTED))
+
                         next_iteration = iterations + 1
                         # Skip iterations if resuming from a previous run
                         if self.config.resume_from_iteration and next_iteration <= self.config.resume_from_iteration:
                             iterations = next_iteration
-                            logger.debug(
-                                "Skipping iteration %d during resume (step %d/%d, sequence %d/%d, repeat %d/%d)",
-                                iterations,
-                                step_idx + 1,
-                                len(repeat_seq.steps),
-                                seq_idx + 1,
-                                len(config.repeat_sequences),
-                                repeat_num + 1,
-                                repeat_seq.repeat,
-                            )
                             continue
-                        
+
                         iterations = next_iteration
-                        # Step-level info is now handled by CLI via on_iteration_start
-                        logger.debug(
-                            "Executing iteration %d (step %d/%d, sequence %d/%d, repeat %d/%d)",
-                            iterations,
-                            step_idx + 1,
-                            len(repeat_seq.steps),
-                            seq_idx + 1,
-                            len(config.repeat_sequences),
-                            repeat_num + 1,
-                            repeat_seq.repeat,
-                        )
-                        
                         # Get prompt for this step
                         prompt = step.prompt
                         if not prompt or (isinstance(prompt, str) and not prompt.strip()):
@@ -243,7 +217,7 @@ class Orchestrator:
                                 prompt_preview = single_line[: max_len - 1] + "…"
                             else:
                                 prompt_preview = single_line
-                        
+
                         # Notify iteration start with detailed info (step + role + prompt preview)
                         if on_iteration_start:
                             sequence_info = ""
@@ -260,12 +234,9 @@ class Orchestrator:
                                 role_name,
                                 prompt_preview,
                             )
-                        
+
                         # Always create a new session for each step
                         new_session_id = str(uuid.uuid4())
-                        # Session creation info is now surfaced by CLI
-                        logger.debug(f"New session created for step {iterations}")
-                        
                         # Create executor config for this step (new session, no resume)
                         executor_config = ExecutorConfig(
                             idle_timeout_secs=self.config.iteration_timeout_secs,
@@ -274,20 +245,19 @@ class Orchestrator:
                             session_id=new_session_id,
                             disallowed_tools=self.config.disallowed_tools or ["AskUserQuestion"],
                         )
-                        
+
                         # Create executor for this step
                         self._executor = ClaudeExecutor(executor_config)
-                        
+
                         # Run Claude
                         try:
-                            
                             # Wrap on_raw_line to include iteration number
                             def make_raw_line_callback(iter_num: int):
                                 def callback(line: str):
                                     if on_raw_line:
                                         on_raw_line(iter_num, line)
                                 return callback
-                            
+
                             current_prompt = prompt
                             cli_started=False   
                             while True:
@@ -303,14 +273,14 @@ class Orchestrator:
                                 is_interactive = step.interactive
                                 if not is_interactive:
                                     break
-                                
+
                                 try:
                                     log_print(f"[yellow]{_('cli.chat_mode_hint')}[/yellow]")
                                     kb = KeyBindings()
                                     @kb.add('c-m')
                                     def _on_submit(event):
                                         event.current_buffer.validate_and_handle()
-                                    
+
                                     session = PromptSession(style=_chat_prompt_style, key_bindings=kb)
                                     user_input = (await session.prompt_async(
                                         [('class:prompt', '>>> ')],
@@ -318,13 +288,13 @@ class Orchestrator:
                                     )).strip()
                                 except (EOFError, KeyboardInterrupt):
                                     break
-                                
+
                                 if user_input.lower() == "exit":
                                     break
-                                
+
                                 # Update prompt for next run in same session
                                 current_prompt = user_input
-                                
+
                                 # Create executor config with resume=True for subsequent runs in same session
                                 resume_executor_config = ExecutorConfig(
                                     idle_timeout_secs=self.config.iteration_timeout_secs,
@@ -333,15 +303,15 @@ class Orchestrator:
                                     session_id=new_session_id,
                                     disallowed_tools=self.config.disallowed_tools or ["AskUserQuestion"],
                                 )
-                                
+
                                 # Create a new executor for the next interaction in the same session
                                 self._executor = ClaudeExecutor(resume_executor_config)
-                            
+
                             # End CLI section if started
                             if cli_started:
                                 log_print(f"[bold magenta]{_('cli.claude_end')}[/bold magenta]")
                                 cli_started = False
-                                
+
                         except asyncio.CancelledError:
                             return LoopResult(
                                 status=LoopStatus.INTERRUPTED,
@@ -361,22 +331,22 @@ class Orchestrator:
                         except RalphContinueRequested:
                             # Skip current step, continue to next step in the loop
                             continue
-                        
+
                         # Collect output
                         outputs.append(result.output)
-                        
+
                         # Update cost
                         if result.session_result:
                             total_cost += result.session_result.total_cost_usd
-                        
+
                         # Callback
                         if on_iteration:
                             on_iteration(iterations, result)
-                        
+
                         # Save output for each iteration
                         if on_save_output and result.output:
                             on_save_output(iterations, result.output)
-                        
+
                         # Check for errors
                         if not result.success and result.exit_code not in (0, 130):
                             return LoopResult(
@@ -387,7 +357,7 @@ class Orchestrator:
                                 outputs=outputs,
                                 error=f"Process exited with code {result.exit_code}",
                             )
-            
+
             # All sequences completed
             return LoopResult(
                 status=LoopStatus.COMPLETED,
@@ -396,6 +366,8 @@ class Orchestrator:
                 total_cost_usd=total_cost,
                 outputs=outputs,
             )
+        except LoopInterrupted as exc:
+            return exc.loop_result
         
         finally:
             # Remove signal handler

@@ -55,6 +55,8 @@
   "help": {
     "description": "Ralph-sq 是一个先进的 Agent 序列编排器",
     "commands": "子命令",
+    "send_help": "向运行中的 ralph-sq 会话发送控制命令",
+    "send_commands": "控制命令",
     "run_help": "使用配置文件运行 Claude",
     "run_lang": "显示语言 (默认: {lang})",
     "run_max_iterations": "最大循环迭代次数 (默认: 1)",

@@ -57,12 +57,16 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=_("help.run_resume"),
     )
-
-    # Exit command
-    subparsers.add_parser("exit", help=_("help.exit_help"))
-
-    # Continue command (skip current step, continue loop when invoked via Bash during run)
-    subparsers.add_parser("continue", help=_("help.continue_help"))
+    
+    # Send control commands to a running session
+    send_parser = subparsers.add_parser("send", help=_("help.send_help"))
+    send_subparsers = send_parser.add_subparsers(
+        dest="send_command",
+        help=_("help.send_commands"),
+    )
+    send_subparsers.required = True
+    send_subparsers.add_parser("system:exit", help=_("help.exit_help"))
+    send_subparsers.add_parser("system:continue", help=_("help.continue_help"))
 
     # Update command
     subparsers.add_parser("update", help=_("help.update_help"))
@@ -76,7 +80,7 @@ def create_parser() -> argparse.ArgumentParser:
     lang_parser.add_argument(
         "value",
         nargs="?",
-        choices=["en", "zh", "cn"],
+        choices=["en", "zh"],
         help=_("help.config_lang_value", lang=get_setting("language", "en")),
     )
 

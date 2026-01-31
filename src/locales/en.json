@@ -55,6 +55,8 @@
   "help": {
     "description": "Agent orchestrator for Claude Code CLI",
     "commands": "Commands",
+    "send_help": "Send control commands to a running ralph-sq session",
+    "send_commands": "Control commands",
     "run_help": "Run Claude with configuration file",
     "run_lang": "Language for display (default: {lang})",
     "run_max_iterations": "Maximum loop iterations (default: 1)",

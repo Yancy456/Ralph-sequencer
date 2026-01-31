@@ -60,6 +60,31 @@ def format_duration(ms: int) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
+def _extract_ralph_action(command: str) -> Optional[str]:
+    """Parse `ralph-sq` commands to find exit/continue actions."""
+    command = command.strip()
+    if not command.startswith("ralph-sq"):
+        return None
+
+    parts = command.split()
+    if len(parts) < 2:
+        return None
+
+    if parts[1] == "send":
+        if len(parts) >= 3:
+            return _normalize_action(parts[2])
+        return None
+
+    return _normalize_action(parts[1])
+
+
+def _normalize_action(action: str) -> str:
+    """Normalize legacy and new control actions to plain keywords."""
+    if action.startswith("system:"):
+        return action.split(":", 1)[1]
+    return action
+
+
 
 def _get_tool_detail(name: str, inputs: dict) -> str:
     """Extract relevant detail from tool inputs for display."""
@@ -217,7 +242,6 @@ async def run_sequences(
         lines.extend([
             highlighted_step_info,
             _("cli.role", role=f"[yellow]{role}[/yellow]"),
-            _("cli.prompt", prompt=prompt_preview_val),
             _("cli.memory", status=f"[red]{memory_status}[/red]")
         ])
         content = "\n".join(lines)
@@ -286,9 +310,10 @@ async def run_sequences(
                         log_print(f"{agent_prefix}[yellow]\\[{block.name}][/yellow]{detail}")
                         if block.name == "Bash":
                             cmd = (block.input.get("command") or "").strip()
-                            if cmd.startswith("ralph-sq exit"):
+                            action = _extract_ralph_action(cmd)
+                            if action == "exit":
                                 raise RalphExitRequested
-                            if cmd.startswith("ralph-sq continue"):
+                            if action == "continue":
                                 raise RalphContinueRequested
         else:
             # For non-JSON output (plain text mode), treat as message

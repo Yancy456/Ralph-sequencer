@@ -30,6 +30,14 @@ def main() -> int:
 
     parser = create_parser()
     args = parser.parse_args()
+
+    def handle_exit() -> int:
+        console.print(_("cli.terminated"))
+        return 0
+
+    def handle_continue() -> int:
+        console.print(_("cli.continue_skip"))
+        return 0
     
 
     if not args.command:
@@ -42,11 +50,12 @@ def main() -> int:
     setup_logging()
     
     try:
-        if args.command == "exit":
-            console.print(_("cli.terminated"))
-            return 0
-        if args.command == "continue":
-            console.print(_("cli.continue_skip"))
+        if args.command == "send":
+            if args.send_command in ("exit", "system:exit"):
+                return handle_exit()
+            if args.send_command in ("continue", "system:continue"):
+                return handle_continue()
+            parser.print_help()
             return 0
         if args.command == "config":
             if args.config_item == "lang":
