@@ -25,6 +25,8 @@ class SequenceStep:
     prompt: Optional[str] = None
     new_session: bool = False
     interactive: bool = False
+    # When set, after N times of "ralph-sq send system:subtask_completed" trigger continue (None = no limit)
+    continue_when_subtask: Optional[int] = None
 
 
 @dataclass
@@ -113,6 +115,7 @@ class RalphConfig:
                                     prompt=prompt,
                                     new_session=step_data.get("new_session", True),
                                     interactive=step_data.get("interactive", False),
+                                    continue_when_subtask=step_data.get("continue_when_subtask"),
                                 )
                                 steps.append(step)
                     

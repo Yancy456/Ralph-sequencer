@@ -55,6 +55,9 @@ def main() -> int:
                 return handle_exit()
             if args.send_command in ("continue", "system:continue"):
                 return handle_continue()
+            if args.send_command == "system:subtask_completed":
+                console.print(_("cli.subtask_completed_ack"))
+                return 0
             parser.print_help()
             return 0
         if args.command == "config":

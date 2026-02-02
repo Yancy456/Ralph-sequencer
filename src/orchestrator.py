@@ -23,6 +23,7 @@ from .exceptions import RalphExitRequested, RalphContinueRequested
 from .executor import ClaudeExecutor, ExecutorConfig, ExecutionResult
 from .logging_system import log_print
 from .i18n import _
+from .stream_parser import ClaudeStreamParser, AssistantEvent, ToolUseContent
 # Style for the chat prompt
 _chat_prompt_style = Style.from_dict({
     'prompt': '#ffcc00',  # Yellow color
@@ -81,6 +82,35 @@ IterationCallback = Callable[[int, ExecutionResult], None]
 IterationStartCallback = Callable[[int, str, str, str, str], None]
 SaveOutputCallback = Callable[[int, str], None]  # Callback to save output (iteration, output)
 RawLineCallback = Callable[[int, str], None]  # Callback for raw NDJSON lines (iteration, line)
+
+
+def _extract_ralph_action_from_line(line: str) -> Optional[str]:
+    """Parse a raw NDJSON line for ralph-sq control actions (exit, continue, subtask_completed). Returns None if none."""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        event = ClaudeStreamParser.parse_line(line)
+    except Exception:
+        return None
+    if not isinstance(event, AssistantEvent):
+        return None
+    for block in event.message.content:
+        if not isinstance(block, ToolUseContent) or block.name != "Bash":
+            continue
+        cmd = (block.input.get("command") or "").strip()
+        if not cmd.startswith("ralph-sq"):
+            continue
+        parts = cmd.split()
+        if len(parts) < 2:
+            continue
+        if parts[1] == "send" and len(parts) >= 3:
+            action = parts[2]
+            if action.startswith("system:"):
+                return action.split(":", 1)[1]
+            return action
+        return parts[1] if len(parts) >= 2 else None
+    return None
 
 
 class Orchestrator:
@@ -192,6 +222,23 @@ class Orchestrator:
                         if self._interrupted:
                             raise LoopInterrupted(_build_loop_result(LoopStatus.INTERRUPTED))
 
+                        # Per-step counter for "ralph-sq send system:subtask_completed"
+                        subtask_count: list[int] = [0]
+                        continue_when_subtask: Optional[int] = getattr(step, "continue_when_subtask", None)
+
+                        def step_raw_line(iter_num: int, line: str) -> None:
+                            if on_raw_line:
+                                on_raw_line(iter_num, line)
+                            action = _extract_ralph_action_from_line(line)
+                            if action == "subtask_completed":
+                                subtask_count[0] += 1
+                                if continue_when_subtask is not None and subtask_count[0] >= continue_when_subtask:
+                                    raise RalphContinueRequested
+                            if action == "continue":
+                                raise RalphContinueRequested
+                            if action == "exit":
+                                raise RalphExitRequested
+
                         next_iteration = iterations + 1
                         # Skip iterations if resuming from a previous run
                         if self.config.resume_from_iteration and next_iteration <= self.config.resume_from_iteration:
@@ -251,11 +298,10 @@ class Orchestrator:
 
                         # Run Claude
                         try:
-                            # Wrap on_raw_line to include iteration number
+                            # Wrap on_raw_line to include iteration number and step-level subtask counter
                             def make_raw_line_callback(iter_num: int):
                                 def callback(line: str):
-                                    if on_raw_line:
-                                        on_raw_line(iter_num, line)
+                                    step_raw_line(iter_num, line)
                                 return callback
 
                             current_prompt = prompt
@@ -276,12 +322,8 @@ class Orchestrator:
 
                                 try:
                                     log_print(f"[yellow]{_('cli.chat_mode_hint')}[/yellow]")
-                                    kb = KeyBindings()
-                                    @kb.add('c-m')
-                                    def _on_submit(event):
-                                        event.current_buffer.validate_and_handle()
 
-                                    session = PromptSession(style=_chat_prompt_style, key_bindings=kb)
+                                    session = PromptSession(style=_chat_prompt_style)
                                     user_input = (await session.prompt_async(
                                         [('class:prompt', '>>> ')],
                                         multiline=True,

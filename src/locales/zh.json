@@ -27,6 +27,8 @@
     "no_previous_state": "未找到之前的状态；从头开始。",
     "terminated": "ralph-sq 已终止",
     "continue_skip": "ralph-sq 继续 (在运行期间通过 Bash 调用时跳过当前步骤)",
+    "subtask_completed_ack": "ralph-sq 已收到 subtask_completed",
+    "complete_ack": "ralph-sq 已标记为完成",
     "interrupted": "已中断",
     "running_inline": "正在使用内联提示词运行单次迭代",
     "loaded_sequences": "从配置中加载了 {count} 个序列",
@@ -67,6 +69,8 @@
     "run_resume": "从上次保存的迭代状态恢复 (如果可用)",
     "exit_help": "终止 ralph-sq",
     "continue_help": "跳过当前步骤并继续下一步 (在运行期间通过 Bash 调用时)",
+    "subtask_completed_help": "通知子任务已完成 (计入 continue_when_subtask)",
+    "complete_help": "将正在运行的 ralph-sq 会话标记为完成",
     "config_help": "管理持久化设置",
     "config_items": "设置项",
     "config_lang_help": "设置默认语言",
@@ -83,6 +87,7 @@
     "interrupted": "⚡ 已中断",
     "error": "✗ 错误",
     "exit_requested": "✓ RalphExitRequested (请求退出)",
-    "continue_requested": "✓ RalphContinueRequested (请求继续)"
+    "continue_requested": "✓ RalphContinueRequested (请求继续)",
+    "no_complete_signal": "完成但未收到完成信号"
   }
 }

@@ -67,6 +67,7 @@ def create_parser() -> argparse.ArgumentParser:
     send_subparsers.required = True
     send_subparsers.add_parser("system:exit", help=_("help.exit_help"))
     send_subparsers.add_parser("system:continue", help=_("help.continue_help"))
+    send_subparsers.add_parser("system:subtask_completed", help=_("help.subtask_completed_help"))
 
     # Update command
     subparsers.add_parser("update", help=_("help.update_help"))

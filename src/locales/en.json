@@ -27,6 +27,8 @@
     "no_previous_state": "No previous state found; starting from beginning.",
     "terminated": "ralph-sq has been terminated",
     "continue_skip": "ralph-sq continue (skips current step when invoked via Bash during run)",
+    "subtask_completed_ack": "ralph-sq subtask_completed acknowledged",
+    "complete_ack": "ralph-sq marked as complete",
     "interrupted": "Interrupted",
     "running_inline": "Running single iteration with inline prompt",
     "loaded_sequences": "Loaded {count} sequence(s) from configuration",
@@ -67,6 +69,8 @@
     "run_resume": "Resume from the last saved iteration state (if available)",
     "exit_help": "Terminate ralph-sq",
     "continue_help": "Skip current step and continue to next (when invoked during run)",
+    "subtask_completed_help": "Notify subtask completed (counts toward continue_when_subtask)",
+    "complete_help": "Mark a running ralph-sq session as complete",
     "config_help": "Manage persistent settings",
     "config_items": "Settings items",
     "config_lang_help": "Set default language",
@@ -82,7 +86,8 @@
     "timeout": "⏱ Timeout",
     "interrupted": "⚡ Interrupted",
     "error": "✗ Error",
-    "exit_requested": "✓ RalphExitRequested",
-    "continue_requested": "✓ RalphContinueRequested"
+    "exit_requested": "✗ RalphExitRequested",
+    "continue_requested": "✓ RalphContinueRequested",
+    "no_complete_signal": "Finished without completion signal"
   }
 }
