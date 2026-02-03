@@ -352,10 +352,18 @@ async def run_sequences(
         LoopStatus.RALPH_EXIT_REQUESTED: _("status.exit_requested"),
         LoopStatus.RALPH_CONTINUE_REQUESTED: _("status.continue_requested"),
     }.get(loop_result.status, str(loop_result.status))
-    
+
+    # Status display color: error=red, exit_requested=green, others=yellow
+    status_color = {
+        LoopStatus.ERROR: "red",
+        LoopStatus.RALPH_EXIT_REQUESTED: "green",
+    }
+    color = status_color.get(loop_result.status, "yellow")
+    status_display = f"[{color}]{status_emoji}[/{color}]"
+
     duration_str = format_duration(loop_result.total_duration_ms)
     log_print(Panel(
-        f"{_('cli.status', status=status_emoji)}\n"
+        f"{_('cli.status', status=status_display)}\n"
         f"{_('cli.iterations', count=loop_result.iterations)}\n"
         f"{_('cli.duration', duration=duration_str)}\n"
         f"{_('cli.total_cost', cost=f'{loop_result.total_cost_usd:.4f}')}",

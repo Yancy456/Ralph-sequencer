@@ -5,3 +5,4 @@ repeat_sequence:
         - role: guider
           prompt_file: prompts/guider.md
           interactive: true
+          max_conversation: 3

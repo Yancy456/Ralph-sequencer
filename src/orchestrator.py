@@ -305,7 +305,9 @@ class Orchestrator:
                                 return callback
 
                             current_prompt = prompt
-                            cli_started=False   
+                            cli_started = False
+                            max_conversation = getattr(step, "max_conversation", None)
+                            conversation_count = 0
                             while True:
                                 if not cli_started:
                                     log_print(f"[bold magenta]{_('cli.claude_start')}[/bold magenta]")
@@ -315,14 +317,23 @@ class Orchestrator:
                                     current_prompt,
                                     on_raw_line=make_raw_line_callback(iterations),
                                 )
+                                conversation_count += 1
                                 # Use step-level interactive config, fallback to global config
                                 is_interactive = step.interactive
                                 if not is_interactive:
                                     break
+                                # If max_conversation set and reached, proceed to next sequence
+                                if max_conversation is not None and conversation_count >= max_conversation:
+                                    break
 
                                 try:
-                                    log_print(f"[yellow]{_('cli.chat_mode_hint')}[/yellow]")
-
+                                    if max_conversation is not None:
+                                        remaining = max_conversation - conversation_count
+                                        log_print(f"[yellow]{_('cli.chat_mode_hint')}[/yellow]"+
+                                        f" [yellow]{_('cli.chat_remaining_rounds', count=remaining)}[/yellow]"
+                                        )
+                                    else:
+                                        log_print(f"[yellow]{_('cli.chat_mode_hint')}[/yellow]")
                                     session = PromptSession(style=_chat_prompt_style)
                                     user_input = (await session.prompt_async(
                                         [('class:prompt', '>>> ')],

@@ -25,6 +25,8 @@ class SequenceStep:
     prompt: Optional[str] = None
     new_session: bool = False
     interactive: bool = False
+    # In interactive mode, max conversation rounds (None = no limit); when exceeded, proceed to next sequence
+    max_conversation: Optional[int] = None
     # When set, after N times of "ralph-sq send system:subtask_completed" trigger continue (None = no limit)
     continue_when_subtask: Optional[int] = None
 
@@ -115,6 +117,7 @@ class RalphConfig:
                                     prompt=prompt,
                                     new_session=step_data.get("new_session", True),
                                     interactive=step_data.get("interactive", False),
+                                    max_conversation=step_data.get("max_conversation"),
                                     continue_when_subtask=step_data.get("continue_when_subtask"),
                                 )
                                 steps.append(step)
